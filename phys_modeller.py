@@ -164,12 +164,10 @@ def main_app():
         # --- Improved Animation Controls ---
         st.subheader("🎮 Controls")
         
-        # We use a "Speed Factor" logic now. 
-        # 1 = Slow, 100 = Fast. 
-        # Default around 50 (Normal).
+        # Speed Factor: 1 (Slow) to 100 (Fast).
         speed_factor = st.slider("⚡ Animation Speed", min_value=1, max_value=100, value=50, help="Slide right to make the animation faster.")
         
-        # Math: If speed is 100, duration is 10ms. If speed is 1, duration is 1000ms.
+        # Math: Speed 100 -> 10ms delay. Speed 1 -> 1000ms delay.
         frame_duration = int(1000 / speed_factor)
         
         st.caption(f"Current Setting: {frame_duration}ms per frame")
@@ -207,23 +205,22 @@ def main_app():
                 if "fig" in exec_globals:
                     fig = exec_globals["fig"]
                     
-                    # Apply the calculated speed (duration) to buttons and frames
-                    if fig.layout.updatemenus:
-                        for button in fig.layout.updatemenus[0].buttons:
-                            if "args" in button:
-                                # Attempt to set duration in the button args
-                                # This controls how fast the 'Play' button triggers the next frame
-                                try:
-                                    button.args[1]['frame']['duration'] = frame_duration
-                                except:
-                                    pass
-                    
-                    # Also update the frames themselves just in case
-                    # (Plotly sometimes respects the frame duration over the button duration)
-                    # Note: This loop is fast for <100 frames
-                    if fig.frames:
-                         for fr in fig.frames:
-                             fr.duration = frame_duration
+                    # FIXED: Safely apply speed to the Play Button only.
+                    # We do NOT iterate over fig.frames to set duration anymore.
+                    try:
+                        if fig.layout.updatemenus:
+                            for menu in fig.layout.updatemenus:
+                                if menu.type == 'buttons':
+                                    for button in menu.buttons:
+                                        if button.label == 'Play':
+                                            if len(button.args) > 1 and isinstance(button.args[1], dict):
+                                                # Update frame duration (speed)
+                                                button.args[1]['frame']['duration'] = frame_duration
+                                                # Update transition duration (smoothness)
+                                                button.args[1]['transition']['duration'] = 0
+                    except Exception as e:
+                        # If button structure varies, we skip optimization to prevent crash
+                        print(f"Could not update animation speed: {e}")
 
                     st.plotly_chart(fig, use_container_width=True)
                 else:
