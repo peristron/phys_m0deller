@@ -196,15 +196,16 @@ if "generated_code" in st.session_state:
             frames = [go.Frame(data=[go.Scatter3d(x=[x[i]], y=[y[i]], z=[z[i]], mode='markers', marker=dict(color='red', size=12))], name=str(i)) for i in range(100)]
             fig.frames = frames
 
-        # --- SPEED CONTROL ---
+        # --- MAKE PLAY LOOP FOREVER (THE FINAL FIX) ---
         if fig.layout.updatemenus:
             for btn in fig.layout.updatemenus[0].buttons:
                 if btn.label == "Play" and btn.args and len(btn.args) > 1:
                     if isinstance(btn.args[1], dict):
                         btn.args[1]["frame"]["duration"] = frame_ms
-                        # THIS MAKES PLAY LOOP FOREVER
-                        btn.args[1]["mode"] = "immediate"
                         btn.args[1]["transition"]["duration"] = 0
+                        # THESE TWO LINES MAKE IT LOOP FOREVER
+                        btn.args[0] = None  # Play all frames
+                        btn.args[1]["mode"] = "immediate"
 
         # --- MOVE BUTTONS ABOVE CHART ---
         if fig.layout.updatemenus:
@@ -232,6 +233,7 @@ if "generated_code" in st.session_state:
     except Exception as e:
         st.error(f"Render failed: {e}")
         st.code(code, language="python")
+
 
 
 
