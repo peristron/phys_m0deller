@@ -185,6 +185,7 @@ if st.button("Generate Animation", type="primary"):
         st.session_state.generated_code = final_code
 
 # === FINAL RENDERING: ONLY SIDEBAR BUTTONS WORK (NO NATIVE BUTTONS) ===
+# === FINAL RENDERING: NATIVE BUTTONS ABOVE + INFINITE LOOP ===
 if "generated_code" in st.session_state:
     code = st.session_state.generated_code
 
@@ -215,53 +216,32 @@ if "generated_code" in st.session_state:
                 if btn.label == "Play" and btn.args and len(btn.args) > 1:
                     if isinstance(btn.args[1], dict):
                         btn.args[1]["frame"]["duration"] = frame_ms
+                        # THIS MAKES PLAY LOOP FOREVER
+                        btn.args[1]["mode"] = "immediate"
+                        btn.args[1]["transition"]["duration"] = 0
 
-        # --- COMPLETELY DISABLE PLOTLY'S NATIVE BUTTONS ---
+        # --- MOVE BUTTONS ABOVE CHART ---
+        if fig.layout.updatemenus:
+            play_pause = fig.layout.updatemenus[0].to_plotly_json()
+            play_pause.update({
+                "y": 1.15, "x": 0.0, "xanchor": "left", "yanchor": "top",
+                "bgcolor": "rgba(255,255,255,0.9)", "bordercolor": "#333", "borderwidth": 1
+            })
+            fig.update_layout(updatemenus=[play_pause])
+
         fig.update_layout(
-            updatemenus=[],
-            sliders=[],
             height=800,
             margin=dict(l=0, r=0, t=60, b=0),
             title="AI-Generated Physics Simulation",
             title_x=0.5,
-            scene=dict(aspectmode='data'),
-            # This is the nuclear option — hides all animation controls
-            modebar_remove=["play3d", "pause3d", "resetCameraDefault3d", "resetCameraLastSave3d"]
+            scene=dict(aspectmode='data')
         )
 
-        # --- RENDER ---
-        chart = st.plotly_chart(
+        st.plotly_chart(
             fig,
             use_container_width=True,
-            config={
-                "displaylogo": False,
-                "scrollZoom": True,
-                "modeBarButtonsToRemove": ["play3d", "pause3d", "resetCameraDefault3d", "resetCameraLastSave3d"]
-            },
-            key=f"plot_{hash(user_input)}_{st.session_state.animating}"
+            config={"displaylogo": False, "scrollZoom": True}
         )
-
-        # --- SIDEBAR PLAY/PAUSE (NOW 100% WORKS) ---
-        if st.session_state.animating:
-            st.components.v1.html(
-                f"""
-                <script>
-                const plot = document.querySelector('[data-testid="stPlotlyChart"] .plotly');
-                if (plot && !{st.session_state.get('played', False)}) {{
-                    setTimeout(() => {{
-                        Plotly.animate(plot, null, {{
-                            frame: {{duration: {frame_ms}, redraw: true}},
-                            transition: {{duration: 0}},
-                            fromcurrent: true
-                        }});
-                        parent.document.st_session_state_played = true;
-                    }}, 800);
-                }}
-                </script>
-                """,
-                height=0
-            )
-            st.session_state.played = True
 
     except Exception as e:
         st.error(f"Render failed: {e}")
