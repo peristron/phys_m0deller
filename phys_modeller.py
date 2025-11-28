@@ -171,8 +171,7 @@ if st.button("Generate Animation", type="primary"):
                         messages.append({"role": "user", "content": 
                             f"CRITICAL ERROR:\n{error_msg}\n\n"
                             "Fix the code and return ONLY valid, runnable Python. No markdown. No explanation."
-."
-                        ))
+                        })
                         total_output += len(raw_code or "")
                     else:
                         st.error(f"Failed after 4 attempts. Last error: {error_msg}")
@@ -236,27 +235,25 @@ if "generated_code" in st.session_state:
             key=f"plot_{hash(user_input)}_{st.session_state.animating}"
         )
 
-        # --- AUTO-PLAY VIA JS ---
+        # --- AUTO-PLAY VIA JS (FIXED) ---
         if st.session_state.animating:
             st.components.v1.html(
                 f"""
                 <script>
                 const plot = document.querySelector('.js-plotly-plot');
-                if (plot && !{st.session_state.get('played', False)}) {{
+                if (plot) {{
                     setTimeout(() => {{
                         Plotly.animate(plot, null, {{
                             frame: {{duration: {frame_ms}, redraw: true}},
                             transition: {{duration: 0}},
                             fromcurrent: true
                         }});
-                        parent.st.session_state.played = true;
                     }}, 500);
                 }}
                 </script>
                 """,
                 height=0
             )
-            st.session_state.played = True
 
     except Exception as e:
         st.error(f"Render failed: {e}")
