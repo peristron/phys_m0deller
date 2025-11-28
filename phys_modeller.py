@@ -199,48 +199,47 @@ def main_app():
                 if "fig" in exec_globals:
                     fig = exec_globals["fig"]
                     
-                    # --- ROBUST POST-PROCESSING ---
-                    # We assume the AI might mess up button visibility or speed.
-                    # We forcefully overwrite the button styling here.
+                    # --- 1. CAMERA LOCK FIX (UiRevision) ---
+                    # This tells Plotly: "Don't reset zoom/camera when the data updates"
+                    fig.update_layout(uirevision="Don't Reset")
                     
+                    # Specifically for 3D scenes, we apply it to the scene dict as well to be safe
+                    fig.update_layout(scene=dict(uirevision="Don't Reset"))
+
+                    # --- 2. ROBUST POST-PROCESSING (Buttons & Speed) ---
                     if fig.layout.updatemenus:
-                        # 1. FIX VISIBILITY: Force high-contrast styling
+                        # FIX VISIBILITY: Force high-contrast styling
                         fig.update_layout(
                             updatemenus=[
                                 dict(
                                     type="buttons",
                                     direction="left",
-                                    x=0.1, y=0, # Position near bottom
+                                    x=0.1, y=0, 
                                     showactive=True,
                                     bgcolor="white",
                                     bordercolor="#333",
                                     borderwidth=1,
                                     font=dict(color="black", size=12),
                                     pad={"r": 10, "t": 10},
-                                    buttons=fig.layout.updatemenus[0].buttons # Keep the logic, change the style
+                                    buttons=fig.layout.updatemenus[0].buttons
                                 )
                             ]
                         )
 
-                        # 2. FIX SPEED & REDRAW: Inject speed settings
+                        # FIX SPEED
                         for button in fig.layout.updatemenus[0].buttons:
                             if button.label == 'Play':
                                 if hasattr(button, 'args') and len(button.args) > 1:
                                     arg_dict = button.args[1]
-                                    
-                                    # Create keys if missing
                                     if 'frame' not in arg_dict: arg_dict['frame'] = {}
                                     if 'transition' not in arg_dict: arg_dict['transition'] = {}
                                     
-                                    # Apply Speed
                                     arg_dict['frame']['duration'] = frame_duration
                                     arg_dict['transition']['duration'] = 0
-                                    
-                                    # FORCE REDRAW: Solves "Static Animation" bug
                                     arg_dict['frame']['redraw'] = True 
                                     arg_dict['fromcurrent'] = True
 
-                    # Render with unique key to force refresh on slider change
+                    # Render
                     st.plotly_chart(fig, use_container_width=True, key=f"sim_chart_{speed_factor}")
                     
                 else:
