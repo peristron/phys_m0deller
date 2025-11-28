@@ -5,7 +5,6 @@ import openai
 import numpy as np
 import plotly.graph_objects as go
 import hashlib
-import time
 import re
 
 # --- CONFIG ---
@@ -48,21 +47,21 @@ def get_cached_code(prompt_hash):
 def set_cached_code(prompt_hash, code):
     st.session_state[f"cache_{prompt_hash}"] = code
 
-# --- SYSTEM PROMPT (Golden) ---
+# --- SYSTEM PROMPT ---
 SYSTEM_PROMPT = """
 You are an expert Python physics visualizer using Plotly.
 
 RULES:
-- Use only: numpy (np), plotly.graph_objects (go), streamlit (st)
-- Generate exactly 100 frames of precomputed data
+- Use only: numpy (np), plotly.graph_objects (go)
+- Generate exactly 100 precomputed frames
 - Define a variable `fig` (Plotly Figure) at the end
 - Include Play/Pause buttons via updatemenus
-- Use smooth, continuous motion (no back-and-forth unless asked)
+- Use smooth, continuous motion
 - All arrays must be float64
 - Output RAW Python code only — no markdown, no explanation
 """
 
-# --- MAIN ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.title("Settings")
     provider = st.radio("Model", ["OpenAI (gpt-4o-mini)", "OpenAI (gpt-4o)", "xAI Grok-4.1"])
@@ -93,46 +92,43 @@ st.caption("Describe a physics scene → get a real-time 3D animation")
 user_input = st.text_area(
     "Describe the physics scene",
     height=120,
-    placeholder="e.g., A red pendulum swinging inside a glowing blue wireframe cube with gravity particles falling",
+    placeholder="e.g., A red sphere orbiting a glowing yellow sun with 12 moons in elliptical paths",
     value="A red sphere orbiting a glowing yellow sun with 12 moons in elliptical paths, all inside a rotating wireframe dodecahedron"
 )
 
 if st.button("Generate Animation", type="primary"):
-    if not key:
-        st.error("API key missing")
-        st.stop()
-
     prompt_hash = hashlib.md5(user_input.encode()).hexdigest()
     cached = get_cached_code(prompt_hash)
     if cached:
         st.success("Loaded from cache!")
-        final_code = cached
+        st.session_state.generated_code = cached
     else:
         with st.status(f"Generating with {model}...", expanded=True) as status:
             st.write("Sending to AI...")
             client = openai.OpenAI(api_key=key, base_url=base_url)
-
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_input}
             ]
 
-            for attempt in range(3):
+            for attempt in range(4):
                 try:
                     response = client.chat.completions.create(
                         model=model,
                         messages=messages,
-                        temperature=0.3,
+                        temperature=0.2 if attempt > 1 else 0.3,
                         max_tokens=4000
                     )
-                    code = response.choices[0].message.content.strip()
-                    code = re.sub(r"^```python|^```|```$", "", code, flags=re.MULTILINE).strip()
+                    raw_code = response.choices[0].message.content.strip()
+                    code = re.sub(r"^```python|^```|```$", "", raw_code, flags=re.MULTILINE).strip()
 
-                    # Test execution
-                    test_env = {"np": np, "go": go, "st": st}
+                    if not code or len(code) < 50:
+                        raise ValueError("Empty or too short code")
+
+                    test_env = {"np": np, "go": go}
                     exec(code, test_env)
                     if "fig" not in test_env:
-                        raise ValueError("No 'fig' defined")
+                        raise ValueError("No 'fig' variable defined")
 
                     final_code = code
                     set_cached_code(prompt_hash, code)
@@ -140,16 +136,20 @@ if st.button("Generate Animation", type="primary"):
                     break
 
                 except Exception as e:
-                    error_msg = f"Attempt {attempt+1} failed: {str(e)[:200]}"
-                    st.warning(error_msg)
-                    messages.append({"role": "assistant", "content": code if 'code' in locals() else ""})
-                    messages.append({"role": "user", "content": f"Fix this error and return only corrected code:\n{str(e)}"})
-                    if attempt == 2:
-                        st.error("Failed after 3 attempts")
+                    error_msg = str(e)
+                    if attempt < 3:
+                        st.warning(f"Attempt {attempt + 1} failed → retrying...")
+                        messages.append({"role": "assistant", "content": raw_code if 'raw_code' in locals() else ""})
+                        messages.append({"role": "user", "content": 
+                            f"CRITICAL ERROR:\n{error_msg}\n\n"
+                            "Fix the code and return ONLY valid, runnable Python. No markdown. No explanation."
+                        })
+                    else:
+                        st.error(f"Failed after 4 attempts. Last error: {error_msg}")
+                        st.code(raw_code, language="python")
                         st.stop()
 
-    # --- Render ---
-    st.session_state.generated_code = final_code
+        st.session_state.generated_code = final_code
 
 if "generated_code" in st.session_state:
     code = st.session_state.generated_code
@@ -166,7 +166,6 @@ if "generated_code" in st.session_state:
         exec(code, env)
         fig = env["fig"]
 
-        # Make it beautiful
         fig.update_layout(
             height=800,
             margin=dict(l=0, r=0, t=30, b=0),
@@ -175,11 +174,10 @@ if "generated_code" in st.session_state:
             scene=dict(aspectmode='data')
         )
 
-        # Fix Play/Pause buttons
         if fig.layout.updatemenus:
             for btn in fig.layout.updatemenus[0].buttons:
-                if btn.label == "Play" and btn.args:
-                    if len(btn.args) > 1 and isinstance(btn.args[1], dict):
+                if btn.label == "Play" and btn.args and len(btn.args) > 1:
+                    if isinstance(btn.args[1], dict):
                         btn.args[1]["frame"]["duration"] = frame_ms
 
         st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False, "scrollZoom": True})
