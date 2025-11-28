@@ -170,7 +170,7 @@ if st.button("Generate Animation", type="primary"):
 
         st.session_state.generated_code = final_code
 
-# === FINAL RENDERING: INFINITE LOOP + CLEAN STATUS ===
+# === FINAL RENDERING: INFINITE LOOP + NO STATUS GLITCH ===
 if "generated_code" in st.session_state:
     code = st.session_state.generated_code
 
@@ -195,7 +195,7 @@ if "generated_code" in st.session_state:
             frames = [go.Frame(data=[go.Scatter3d(x=[x[i]], y=[y[i]], z=[z[i]], mode='markers', marker=dict(color='red', size=12))], name=str(i)) for i in range(100)]
             fig.frames = frames
 
-        # --- INFINITE LOOP + SPEED CONTROL (THIS IS THE FIX) ---
+        # --- INFINITE LOOP + SPEED CONTROL ---
         if fig.layout.updatemenus:
             for btn in fig.layout.updatemenus[0].buttons:
                 if btn.label == "Play":
@@ -229,9 +229,7 @@ if "generated_code" in st.session_state:
             scene=dict(aspectmode='data')
         )
 
-        # --- CLEAR "SENDING TO AI..." STATUS ---
-        st.rerun()  # Forces full refresh — clears old status
-
+        # --- NO st.rerun() HERE — IT KILLS ANIMATION ---
         st.plotly_chart(
             fig,
             use_container_width=True,
