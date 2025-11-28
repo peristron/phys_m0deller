@@ -169,11 +169,21 @@ def main_app():
         st.caption(f"Setting: {frame_duration}ms / frame")
 
     with col2:
+        # --- Status Placeholder ---
+        # This creates a dedicated area for "Working..." messages
+        status_placeholder = st.empty()
+
         if "generated_code" not in st.session_state:
             st.session_state["generated_code"] = None
 
         if generate_btn:
-            with st.spinner(f"Simulating ({model_name})..."):
+            # Clear previous chart while working
+            st.session_state["generated_code"] = None 
+            
+            with status_placeholder.container():
+                st.info(f"⚛️ Initializing Physics Engine ({model_name})... Please wait.")
+                # We don't use st.spinner here so we can control the UI layout better
+                
                 final_code, error, in_txt, out_txt = generate_with_retry(user_instruction, api_key, base_url, model_name)
                 
                 if final_code:
@@ -184,7 +194,10 @@ def main_app():
                 else:
                     st.error(f"Generation failed: {error}")
 
+        # If we have code, clear the loading placeholder and show the result
         if st.session_state["generated_code"]:
+            status_placeholder.empty() # Remove the "Working..." message
+
             d_col1, d_col2 = st.columns([1, 3])
             with d_col1:
                 st.download_button("📥 Download .py", st.session_state["generated_code"], "simulation.py", "text/x-python")
@@ -199,16 +212,13 @@ def main_app():
                 if "fig" in exec_globals:
                     fig = exec_globals["fig"]
                     
-                    # --- 1. CAMERA LOCK FIX (UiRevision) ---
-                    # This tells Plotly: "Don't reset zoom/camera when the data updates"
-                    fig.update_layout(uirevision="Don't Reset")
-                    
-                    # Specifically for 3D scenes, we apply it to the scene dict as well to be safe
-                    fig.update_layout(scene=dict(uirevision="Don't Reset"))
+                    # --- CAMERA LOCK ---
+                    # "uirevision" is the key to keeping the zoom while playing
+                    fig.update_layout(uirevision="Don't Reset", scene=dict(uirevision="Don't Reset"))
 
-                    # --- 2. ROBUST POST-PROCESSING (Buttons & Speed) ---
+                    # --- ROBUST UI FIXES ---
                     if fig.layout.updatemenus:
-                        # FIX VISIBILITY: Force high-contrast styling
+                        # FIX VISIBILITY
                         fig.update_layout(
                             updatemenus=[
                                 dict(
@@ -239,8 +249,21 @@ def main_app():
                                     arg_dict['frame']['redraw'] = True 
                                     arg_dict['fromcurrent'] = True
 
-                    # Render
-                    st.plotly_chart(fig, use_container_width=True, key=f"sim_chart_{speed_factor}")
+                    # --- RENDER WITH MODEBAR ---
+                    # config={'displayModeBar': True} ensures the toolbar is visible.
+                    # 'scrollZoom': True allows mouse wheel zooming.
+                    st.plotly_chart(
+                        fig, 
+                        use_container_width=True, 
+                        key=f"sim_chart_{speed_factor}",
+                        config={
+                            'displayModeBar': True, 
+                            'scrollZoom': True,
+                            'displaylogo': False,
+                            # Force 3D Zoom buttons to appear
+                            'modeBarButtonsToAdd': ['zoomIn3d', 'zoomOut3d']
+                        }
+                    )
                     
                 else:
                     st.error("Code executed but `fig` variable was not defined.")
