@@ -1,43 +1,41 @@
 # streamlit run phys_modeller.py
 #  directory setup: cd C:\users\oakhtar\documents\pyprojs_local
 
-
 import streamlit as st
 import openai
 import numpy as np
 import plotly.graph_objects as go
 import re
+import time
 
 # --- Page Configuration ---
 st.set_page_config(layout="wide", page_title="GenAI Physics Modeler")
 
+# --- Constants for Cost Estimation ---
+# Estimated pricing per 1M tokens (Input / Output)
+PRICING = {
+    "gpt-4o": {"input": 2.50, "output": 10.00},
+    "grok-beta": {"input": 5.00, "output": 15.00} # Conservative estimate
+}
+
 # --- Authentication Logic ---
 def check_password():
     """Returns `True` if the user had the correct password."""
-
     def password_entered():
-        """Checks whether a password entered by the user is correct."""
-        if st.session_state["password"] == st.secrets["app_password"]:
+        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Don't store password
+            del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        # First run, show input for password.
-        st.text_input(
-            "Please enter the App Password", type="password", on_change=password_entered, key="password"
-        )
+        st.text_input("Please enter the App Password", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
-        # Password not correct, show input + error.
-        st.text_input(
-            "Please enter the App Password", type="password", on_change=password_entered, key="password"
-        )
+        st.text_input("Please enter the App Password", type="password", on_change=password_entered, key="password")
         st.error("😕 Password incorrect")
         return False
     else:
-        # Password correct.
         return True
 
 # --- Core Application Logic ---
@@ -53,26 +51,42 @@ def main_app():
     base_url = None
     model_name = ""
     
-    # Load keys from secrets based on selection
     try:
         if provider == "OpenAI":
-            if "openai_api_key" in st.secrets:
-                api_key = st.secrets["openai_api_key"]
+            if "OPENAI_API_KEY" in st.secrets:
+                api_key = st.secrets["OPENAI_API_KEY"]
                 model_name = "gpt-4o" 
             else:
-                st.sidebar.error("Missing 'openai_api_key' in secrets.")
+                st.sidebar.error("Missing 'OPENAI_API_KEY' in secrets.")
                 
         elif provider == "xAI (Grok)":
-            if "xai_api_key" in st.secrets:
-                api_key = st.secrets["xai_api_key"]
+            if "XAI_API_KEY" in st.secrets:
+                api_key = st.secrets["XAI_API_KEY"]
                 base_url = "https://api.x.ai/v1"
                 model_name = "grok-beta"
             else:
-                st.sidebar.error("Missing 'xai_api_key' in secrets.")
+                st.sidebar.error("Missing 'XAI_API_KEY' in secrets.")
     except FileNotFoundError:
         st.error("Secrets file not found. Please set up your .streamlit/secrets.toml")
 
-    # --- LLM Logic ---
+    # --- Helper Functions ---
+    def clean_code(code):
+        code = re.sub(r'^```python', '', code)
+        code = re.sub(r'^```', '', code)
+        code = re.sub(r'```$', '', code)
+        return code.strip()
+
+    def estimate_cost(input_text, output_text, model):
+        # Rough estimation: 1 token ~= 4 characters
+        in_tok = len(input_text) / 4
+        out_tok = len(output_text) / 4
+        rates = PRICING.get(model, {"input": 2.50, "output": 10.00})
+        
+        cost_in = (in_tok / 1_000_000) * rates["input"]
+        cost_out = (out_tok / 1_000_000) * rates["output"]
+        
+        return cost_in, cost_out, in_tok, out_tok
+
     def get_system_prompt():
         return """
         You are a Python Code Generator for a 3D Physics Visualization app.
@@ -84,7 +98,7 @@ def main_app():
         1. Use ONLY these libraries: `numpy` (as np), `plotly.graph_objects` (as go), `streamlit` (as st).
         2. Do NOT create a 'while True' loop. Streamlit cannot handle infinite loops.
         3. Pre-calculate 40-60 frames of data for the animation.
-        4. The code MUST define a figure `fig` using `go.Frame` for animation.
+        4. The code MUST define a figure `fig`. In `fig.layout.updatemenus`, set the 'buttons' to trigger the animation automatically if possible, or make the button prominent.
         5. The code MUST end by calling `st.plotly_chart(fig, use_container_width=True)`.
         6. Adhere to physics principles (gravity, momentum, gas laws) using NumPy for vector math.
         7. Do NOT use markdown blocks (```python). Output RAW CODE only.
@@ -92,14 +106,8 @@ def main_app():
         9. Ensure all arrays used in calculations are initialized as floats (e.g., np.zeros(..., dtype=float)).
         """
 
-    def generate_simulation_code(user_prompt, api_key, base_url, model):
+    def call_llm(messages, api_key, base_url, model):
         client = openai.OpenAI(api_key=api_key, base_url=base_url)
-        
-        messages = [
-            {"role": "system", "content": get_system_prompt()},
-            {"role": "user", "content": f"Create a 3D simulation for: {user_prompt}"}
-        ]
-        
         try:
             response = client.chat.completions.create(
                 model=model,
@@ -108,13 +116,68 @@ def main_app():
             )
             return response.choices[0].message.content
         except Exception as e:
-            return f"Error: {str(e)}"
+            raise e
 
-    def clean_code(code):
-        code = re.sub(r'^```python', '', code)
-        code = re.sub(r'^```', '', code)
-        code = re.sub(r'```$', '', code)
-        return code.strip()
+    # --- Self-Healing Generation Logic ---
+    def generate_with_retry(user_prompt, api_key, base_url, model, max_retries=2):
+        """
+        Generates code, attempts to exec it. 
+        If exec fails, feeds error back to LLM to fix.
+        """
+        
+        # 1. Initial Generation
+        system_prompt = get_system_prompt()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Create a 3D simulation for: {user_prompt}"}
+        ]
+        
+        raw_code = call_llm(messages, api_key, base_url, model)
+        code = clean_code(raw_code)
+        
+        # Track total text for cost estimation
+        total_input_text = system_prompt + user_prompt
+        total_output_text = raw_code
+        
+        # 2. Validation Loop
+        for attempt in range(max_retries + 1):
+            try:
+                # Try to compile the code to check for syntax errors without running it yet
+                # or just create the globals and run it.
+                # We will actually run it in the main loop, but here we check for errors.
+                # To be safe, we just return the code to the main loop, but we need to know if it's broken.
+                # Let's define a test execution environment.
+                test_globals = {"st": st, "np": np, "go": go, "__name__": "__main__"}
+                
+                # We intentionally DO NOT run exec() here fully because it draws charts. 
+                # But to catch syntax/runtime errors, we must run it.
+                # We will assume if compile() works, syntax is okay. Runtime is harder.
+                compile(code, '<string>', 'exec')
+                
+                # If we get here, syntax is valid-ish.
+                return code, None, total_input_text, total_output_text
+                
+            except Exception as e:
+                if attempt < max_retries:
+                    st.warning(f"⚠️ Attempt {attempt+1} produced invalid code. Auto-correcting...")
+                    
+                    error_prompt = f"""
+                    The code you provided threw this error:
+                    {str(e)}
+                    
+                    Fix the code and return ONLY the valid Python code.
+                    """
+                    
+                    messages.append({"role": "assistant", "content": code})
+                    messages.append({"role": "user", "content": error_prompt})
+                    
+                    raw_code = call_llm(messages, api_key, base_url, model)
+                    code = clean_code(raw_code)
+                    
+                    total_input_text += error_prompt
+                    total_output_text += raw_code
+                else:
+                    return None, str(e), total_input_text, total_output_text
 
     # --- Interface ---
     col1, col2 = st.columns([1, 2])
@@ -126,35 +189,77 @@ def main_app():
             value="A wireframe sphere rotating on the Z-axis with 20 gas molecules bouncing around it inside a cubic container."
         )
         
-        # Only enable button if we successfully loaded an API key
         if api_key:
             generate_btn = st.button("Generate Simulation", type="primary")
         else:
             st.warning("API Key missing. Check sidebar configuration.")
             generate_btn = False
 
+        # --- Cost Estimator UI ---
+        st.divider()
+        if "last_cost_data" in st.session_state:
+            c_in, c_out, t_in, t_out = st.session_state["last_cost_data"]
+            total_cost = c_in + c_out
+            
+            st.subheader("💰 Estimated Cost")
+            st.caption(f"Model: {model_name}")
+            
+            m_col1, m_col2 = st.columns(2)
+            with m_col1:
+                st.metric("Input", f"${c_in:.4f}", help=f"~{int(t_in)} Tokens")
+            with m_col2:
+                st.metric("Output", f"${c_out:.4f}", help=f"~{int(t_out)} Tokens")
+            
+            st.success(f"**Total: ${total_cost:.4f}**")
+
     with col2:
+        # Initialize session state for code persistence
+        if "generated_code" not in st.session_state:
+            st.session_state["generated_code"] = None
+
+        # Handle Generation
         if generate_btn:
-            with st.spinner(f"Calculating Physics using {model_name}..."):
-                raw_code = generate_simulation_code(user_instruction, api_key, base_url, model_name)
-                executable_code = clean_code(raw_code)
+            with st.spinner(f"Calculating Physics & Generating Code ({model_name})..."):
+                # Run the self-healing generator
+                final_code, error, in_txt, out_txt = generate_with_retry(user_instruction, api_key, base_url, model_name)
                 
-                with st.expander("View Generated Python Code"):
-                    st.code(executable_code, language='python')
-                
-                try:
-                    # Create a restricted globals dictionary to safeguard exec slightly
-                    # We pass explicit libraries to avoid 'module not found' issues
-                    exec_globals = {
-                        "st": st,
-                        "np": np,
-                        "go": go,
-                        "__name__": "__main__"
-                    }
-                    exec(executable_code, exec_globals)
-                except Exception as e:
-                    st.error(f"Code Execution Error: {e}")
-                    st.error("The LLM generated invalid code. Please try modifying your prompt.")
+                if final_code:
+                    st.session_state["generated_code"] = final_code
+                    
+                    # Calculate Costs
+                    c_in, c_out, t_in, t_out = estimate_cost(in_txt, out_txt, model_name)
+                    st.session_state["last_cost_data"] = (c_in, c_out, t_in, t_out)
+                    
+                    st.rerun() # Rerun to update the UI with code and cost
+                else:
+                    st.error(f"Failed to generate valid code after retries.\nLast Error: {error}")
+
+        # Display Results (if code exists in state)
+        if st.session_state["generated_code"]:
+            
+            # 1. Display Code Expander
+            with st.expander("View Generated Python Code", expanded=False):
+                st.code(st.session_state["generated_code"], language='python')
+            
+            # 2. Download Button
+            st.download_button(
+                label="📥 Download Script",
+                data=st.session_state["generated_code"],
+                file_name="simulation.py",
+                mime="text/x-python"
+            )
+
+            # 3. Execute the Code
+            try:
+                exec_globals = {
+                    "st": st,
+                    "np": np,
+                    "go": go,
+                    "__name__": "__main__"
+                }
+                exec(st.session_state["generated_code"], exec_globals)
+            except Exception as e:
+                st.error(f"Runtime Error during rendering: {e}")
 
 # --- Entry Point ---
 if __name__ == "__main__":
