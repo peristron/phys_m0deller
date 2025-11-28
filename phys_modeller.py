@@ -48,16 +48,18 @@ def set_cached_code(prompt_hash, code):
 
 # --- SYSTEM PROMPT ---
 SYSTEM_PROMPT = """
-You are an expert Python physics visualizer using Plotly.
+You are an expert Python physics animator using Plotly.
 
-RULES:
-- Use only: numpy (np), plotly.graph_objects (go)
-- Generate exactly 100 precomputed frames
-- Define a variable `fig` (Plotly Figure) at the end
-- Include Play/Pause buttons via updatemenus
-- Use smooth, continuous motion
-- All arrays must be float64
-- Output RAW Python code only — no markdown, no explanation
+MANDATORY RULES — FOLLOW EXACTLY:
+1. Use only: numpy as np, plotly.graph_objects as go
+2. Generate EXACTLY 100 precomputed frames using a list called `frames`
+3. Define `frames = [go.Frame(data=..., name=str(i)) for i in range(100)]`
+4. Create the figure with BOTH data and frames:  
+   fig = go.Figure(data=initial_data, frames=frames)
+5. Add Play/Pause buttons using updatemenus
+6. Use smooth, continuous motion (rotation, orbit, etc.)
+7. All arrays must be float64
+8. Output ONLY raw, valid Python code — no markdown, no explanation
 """
 
 # --- SIDEBAR ---
@@ -244,3 +246,4 @@ if "generated_code" in st.session_state:
     except Exception as e:
         st.error(f"Render failed: {e}")
         st.code(code, language="python")
+
