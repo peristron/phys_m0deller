@@ -49,13 +49,15 @@ def check_password():
 
 # --- Core Application ---
 def main_app():
-    st.title("⚛️ Generative Physics Modeler")
-
-    # --- Sidebar ---
+    
+    # --- SIDEBAR: All Controls ---
     with st.sidebar:
-        st.header("Configuration")
-        provider = st.radio("Select Provider", ["OpenAI", "xAI (Grok)"])
-
+        st.title("⚙️ Settings")
+        
+        # 1. Provider Config
+        st.subheader("AI Provider")
+        provider = st.radio("Select Model", ["OpenAI", "xAI (Grok)"])
+        
         api_key = None
         base_url = None
         model_name = ""
@@ -73,7 +75,16 @@ def main_app():
             else: st.error("Missing 'xai_api_key'")
 
         st.divider()
+
+        # 2. Animation Controls
+        st.subheader("🎮 Animation Speed")
+        speed_factor = st.slider("Speed", min_value=1, max_value=100, value=50, label_visibility="collapsed")
+        frame_duration = int(1000 / speed_factor)
+        st.caption(f"Frame Delay: {frame_duration}ms")
+
+        st.divider()
         
+        # 3. Cost Estimate
         with st.expander("💰 Cost Estimate", expanded=False):
             if "last_cost_data" in st.session_state:
                 c_in, c_out, t_in, t_out = st.session_state["last_cost_data"]
@@ -83,6 +94,9 @@ def main_app():
                 st.markdown(f"### Total: ${c_in+c_out:.4f}")
             else:
                 st.info("Run a simulation to see costs.")
+
+    # --- MAIN PAGE: Content Only ---
+    st.title("⚛️ Generative Physics Modeler")
 
     # --- Helpers ---
     def clean_code(code):
@@ -110,7 +124,7 @@ def main_app():
         4. **CRITICAL:** Do NOT call `st.plotly_chart` or `fig.show()`. The host app will render `fig`.
         5. In `fig.layout.updatemenus`, set type='buttons' with 'Play' and 'Pause' buttons.
         6. Ensure the simulation loops seamlessly.
-        7. **IMPORTANT:** When defining frames, ensure you update the specific data of the traces (e.g. fig.data[0].x = ...).
+        7. **IMPORTANT:** When defining frames, ensure you update the specific data of the traces.
         8. Output RAW CODE only (no markdown blocks).
         9. Initialize all arrays as floats.
         """
@@ -147,120 +161,123 @@ def main_app():
                 else:
                     return None, str(e), t_in, t_out
 
-    # --- Main Layout ---
-    col1, col2 = st.columns([1, 2])
+    # --- Input Section (Top) ---
+    with st.container():
+        col_input, col_btn = st.columns([4, 1])
+        with col_input:
+            user_instruction = st.text_area(
+                "Physics Description", 
+                height=100, 
+                placeholder="e.g., A wireframe sphere rotating on the Z-axis...",
+                value="A wireframe sphere rotating on the Z-axis with 20 gas molecules bouncing around it inside a cubic container."
+            )
+        with col_btn:
+            st.write("") # Spacing
+            st.write("") # Spacing
+            if api_key:
+                generate_btn = st.button("🚀 Generate", type="primary", use_container_width=True)
+            else:
+                st.warning("Key Missing")
+                generate_btn = False
 
-    with col1:
-        user_instruction = st.text_area("Physics Description", height=150, 
-            value="A wireframe sphere rotating on the Z-axis with 20 gas molecules bouncing around it inside a cubic container.")
-        
-        if api_key:
-            generate_btn = st.button("Generate Simulation", type="primary")
-        else:
-            st.warning("API Key missing.")
-            generate_btn = False
-        
-        st.divider()
-        
-        # --- Controls ---
-        st.subheader("🎮 Controls")
-        speed_factor = st.slider("⚡ Animation Speed", min_value=1, max_value=100, value=50)
-        frame_duration = int(1000 / speed_factor)
-        st.caption(f"Setting: {frame_duration}ms / frame")
+    # --- Status Placeholder ---
+    status_placeholder = st.empty()
 
-    with col2:
-        # --- Status Placeholder ---
-        status_placeholder = st.empty()
+    if "generated_code" not in st.session_state:
+        st.session_state["generated_code"] = None
 
-        if "generated_code" not in st.session_state:
-            st.session_state["generated_code"] = None
+    if generate_btn:
+        st.session_state["generated_code"] = None 
+        with status_placeholder.container():
+            st.info(f"⚛️ Initializing Physics Engine ({model_name})... Please wait.")
+            final_code, error, in_txt, out_txt = generate_with_retry(user_instruction, api_key, base_url, model_name)
+            
+            if final_code:
+                st.session_state["generated_code"] = final_code
+                c_in, c_out, t_in, t_out = estimate_cost(in_txt, out_txt, model_name)
+                st.session_state["last_cost_data"] = (c_in, c_out, t_in, t_out)
+                st.rerun()
+            else:
+                st.error(f"Generation failed: {error}")
 
-        if generate_btn:
-            st.session_state["generated_code"] = None 
-            with status_placeholder.container():
-                st.info(f"⚛️ Initializing Physics Engine ({model_name})... Please wait.")
-                final_code, error, in_txt, out_txt = generate_with_retry(user_instruction, api_key, base_url, model_name)
-                
-                if final_code:
-                    st.session_state["generated_code"] = final_code
-                    c_in, c_out, t_in, t_out = estimate_cost(in_txt, out_txt, model_name)
-                    st.session_state["last_cost_data"] = (c_in, c_out, t_in, t_out)
-                    st.rerun()
-                else:
-                    st.error(f"Generation failed: {error}")
+    if st.session_state["generated_code"]:
+        status_placeholder.empty() 
 
-        if st.session_state["generated_code"]:
-            status_placeholder.empty() 
-
-            d_col1, d_col2 = st.columns([1, 3])
-            with d_col1:
+        # --- Download / Code View ---
+        with st.expander("View Source Code & Download"):
+            c1, c2 = st.columns([1, 5])
+            with c1:
                 st.download_button("📥 Download .py", st.session_state["generated_code"], "simulation.py", "text/x-python")
-            with d_col2:
-                with st.expander("View Python Code"):
-                    st.code(st.session_state["generated_code"], language='python')
+            with c2:
+                st.code(st.session_state["generated_code"], language='python')
 
-            try:
-                exec_globals = {"st": st, "np": np, "go": go, "__name__": "__main__"}
-                exec(st.session_state["generated_code"], exec_globals)
+        # --- Render Simulation (Full Width) ---
+        try:
+            exec_globals = {"st": st, "np": np, "go": go, "__name__": "__main__"}
+            exec(st.session_state["generated_code"], exec_globals)
+            
+            if "fig" in exec_globals:
+                fig = exec_globals["fig"]
                 
-                if "fig" in exec_globals:
-                    fig = exec_globals["fig"]
-                    
-                    # --- CAMERA LOCK ---
-                    fig.update_layout(uirevision="Don't Reset", scene=dict(uirevision="Don't Reset"))
+                # --- FORCE FULL SCREEN SIZING ---
+                fig.update_layout(
+                    height=850,  # Explicit pixel height
+                    margin=dict(l=0, r=0, t=0, b=0), # Remove white space borders
+                    uirevision="Don't Reset",
+                    scene=dict(uirevision="Don't Reset")
+                )
 
-                    # --- ROBUST UI FIXES ---
-                    if fig.layout.updatemenus:
-                        # FIX VISIBILITY
-                        fig.update_layout(
-                            updatemenus=[
-                                dict(
-                                    type="buttons",
-                                    direction="left",
-                                    x=0.1, y=0, 
-                                    showactive=True,
-                                    bgcolor="white",
-                                    bordercolor="#333",
-                                    borderwidth=1,
-                                    font=dict(color="black", size=12),
-                                    pad={"r": 10, "t": 10},
-                                    buttons=fig.layout.updatemenus[0].buttons
-                                )
-                            ]
-                        )
-
-                        # FIX SPEED
-                        for button in fig.layout.updatemenus[0].buttons:
-                            if button.label == 'Play':
-                                if hasattr(button, 'args') and len(button.args) > 1:
-                                    arg_dict = button.args[1]
-                                    if 'frame' not in arg_dict: arg_dict['frame'] = {}
-                                    if 'transition' not in arg_dict: arg_dict['transition'] = {}
-                                    
-                                    arg_dict['frame']['duration'] = frame_duration
-                                    arg_dict['transition']['duration'] = 0
-                                    arg_dict['frame']['redraw'] = True 
-                                    arg_dict['fromcurrent'] = True
-
-                    # --- RENDER WITH LARGER HEIGHT ---
-                    # Height 850px makes it large enough that zooming is rarely needed.
-                    st.plotly_chart(
-                        fig, 
-                        use_container_width=True, 
-                        height=850, 
-                        key=f"sim_chart_{speed_factor}",
-                        config={
-                            'displayModeBar': True, 
-                            'scrollZoom': True,
-                            'displaylogo': False,
-                            'modeBarButtonsToAdd': ['zoomIn3d', 'zoomOut3d']
-                        }
+                # --- ROBUST UI FIXES ---
+                if fig.layout.updatemenus:
+                    # FIX VISIBILITY
+                    fig.update_layout(
+                        updatemenus=[
+                            dict(
+                                type="buttons",
+                                direction="left",
+                                x=0.1, y=0.05, # Slightly higher to avoid being cut off
+                                showactive=True,
+                                bgcolor="white",
+                                bordercolor="#333",
+                                borderwidth=1,
+                                font=dict(color="black", size=12),
+                                pad={"r": 10, "t": 10},
+                                buttons=fig.layout.updatemenus[0].buttons
+                            )
+                        ]
                     )
-                    
-                else:
-                    st.error("Code executed but `fig` variable was not defined.")
-            except Exception as e:
-                st.error(f"Runtime Error: {e}")
+
+                    # FIX SPEED
+                    for button in fig.layout.updatemenus[0].buttons:
+                        if button.label == 'Play':
+                            if hasattr(button, 'args') and len(button.args) > 1:
+                                arg_dict = button.args[1]
+                                if 'frame' not in arg_dict: arg_dict['frame'] = {}
+                                if 'transition' not in arg_dict: arg_dict['transition'] = {}
+                                
+                                arg_dict['frame']['duration'] = frame_duration
+                                arg_dict['transition']['duration'] = 0
+                                arg_dict['frame']['redraw'] = True 
+                                arg_dict['fromcurrent'] = True
+
+                # Render Full Width
+                st.plotly_chart(
+                    fig, 
+                    use_container_width=True, 
+                    height=850, 
+                    key=f"sim_chart_{speed_factor}",
+                    config={
+                        'displayModeBar': True, 
+                        'scrollZoom': True,
+                        'displaylogo': False,
+                        'modeBarButtonsToAdd': ['zoomIn3d', 'zoomOut3d']
+                    }
+                )
+                
+            else:
+                st.error("Code executed but `fig` variable was not defined.")
+        except Exception as e:
+            st.error(f"Runtime Error: {e}")
 
 if __name__ == "__main__":
     if check_password():
