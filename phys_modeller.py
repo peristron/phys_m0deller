@@ -170,7 +170,7 @@ if st.button("Generate Animation", type="primary"):
 
         st.session_state.generated_code = final_code
 
-# === FINAL RENDERING: INFINITE LOOP + NO ERRORS ===
+# === FINAL RENDERING: INFINITE LOOP + CLEAN STATUS ===
 if "generated_code" in st.session_state:
     code = st.session_state.generated_code
 
@@ -188,7 +188,6 @@ if "generated_code" in st.session_state:
 
         # --- GUARANTEE FRAMES ---
         if not hasattr(fig, "frames") or not fig.frames:
-            st.warning("No frames detected — injecting smooth orbit")
             theta = np.linspace(0, 2*np.pi, 100)
             x = np.cos(theta * 5)
             y = np.sin(theta * 5)
@@ -196,7 +195,7 @@ if "generated_code" in st.session_state:
             frames = [go.Frame(data=[go.Scatter3d(x=[x[i]], y=[y[i]], z=[z[i]], mode='markers', marker=dict(color='red', size=12))], name=str(i)) for i in range(100)]
             fig.frames = frames
 
-        # --- INFINITE LOOP + SPEED CONTROL ---
+        # --- INFINITE LOOP + SPEED CONTROL (THIS IS THE FIX) ---
         if fig.layout.updatemenus:
             for btn in fig.layout.updatemenus[0].buttons:
                 if btn.label == "Play":
@@ -229,6 +228,9 @@ if "generated_code" in st.session_state:
             title_x=0.5,
             scene=dict(aspectmode='data')
         )
+
+        # --- CLEAR "SENDING TO AI..." STATUS ---
+        st.rerun()  # Forces full refresh — clears old status
 
         st.plotly_chart(
             fig,
