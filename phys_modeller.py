@@ -119,11 +119,11 @@ def main_app():
         
         STRICT CONSTRAINTS:
         1. Libraries: `numpy` (as np), `plotly.graph_objects` (as go), `streamlit` (as st).
-        2. NO infinite loops. Pre-calculate 60 frames of data.
+        2. NO infinite loops. Pre-calculate 90 frames of data.
         3. **CRITICAL:** Define a figure variable named `fig`. 
         4. **CRITICAL:** Do NOT call `st.plotly_chart` or `fig.show()`. The host app will render `fig`.
         5. In `fig.layout.updatemenus`, set type='buttons' with 'Play' and 'Pause' buttons.
-        6. Ensure the simulation loops seamlessly.
+        6. Ensure the simulation uses linear, continuous motion (e.g. full rotation) rather than oscillating back and forth.
         7. **IMPORTANT:** When defining frames, ensure you update the specific data of the traces.
         8. Output RAW CODE only (no markdown blocks).
         9. Initialize all arrays as floats.
@@ -186,8 +186,7 @@ def main_app():
     if generate_btn:
         st.session_state["generated_code"] = None 
         
-        # --- VISIBLE STATUS INDICATOR ---
-        # Using st.status to show a persistent log of what's happening
+        # --- STATUS INDICATOR ---
         with st.status(f"⚛️ Simulating with {model_name}...", expanded=True) as status:
             st.write("Calculating Physics Vectors...")
             final_code, error, in_txt, out_txt = generate_with_retry(user_instruction, api_key, base_url, model_name)
@@ -213,7 +212,7 @@ def main_app():
             with c2:
                 st.code(st.session_state["generated_code"], language='python')
 
-        # --- Render Simulation (Full Width) ---
+        # --- Render Simulation ---
         try:
             exec_globals = {"st": st, "np": np, "go": go, "__name__": "__main__"}
             exec(st.session_state["generated_code"], exec_globals)
@@ -223,22 +222,21 @@ def main_app():
                 
                 # --- FORCE FULL SCREEN SIZING ---
                 fig.update_layout(
-                    height=850,  # Explicit pixel height
-                    margin=dict(l=0, r=0, t=0, b=0), # Remove white space borders
+                    height=850,
+                    margin=dict(l=0, r=0, t=0, b=0),
                     uirevision="Don't Reset",
                     scene=dict(uirevision="Don't Reset")
                 )
 
                 # --- ROBUST UI FIXES ---
                 if fig.layout.updatemenus:
-                    # FIX VISIBILITY & POSITION
-                    # Changed y to 1.0 (Top) and yanchor to 'top'
+                    # FIX VISIBILITY & POSITION (TOP LEFT)
                     fig.update_layout(
                         updatemenus=[
                             dict(
                                 type="buttons",
                                 direction="left",
-                                x=0.0, y=1.0, # TOP LEFT CORNER
+                                x=0.0, y=1.0, 
                                 xanchor="left", yanchor="top",
                                 showactive=True,
                                 bgcolor="white",
@@ -251,7 +249,7 @@ def main_app():
                         ]
                     )
 
-                    # FIX SPEED
+                    # FIX SPEED ONLY (Reduced aggression)
                     for button in fig.layout.updatemenus[0].buttons:
                         if button.label == 'Play':
                             if hasattr(button, 'args') and len(button.args) > 1:
@@ -259,12 +257,12 @@ def main_app():
                                 if 'frame' not in arg_dict: arg_dict['frame'] = {}
                                 if 'transition' not in arg_dict: arg_dict['transition'] = {}
                                 
+                                # Only update timing, do NOT force redraw/fromcurrent
+                                # This allows natural animation flow
                                 arg_dict['frame']['duration'] = frame_duration
                                 arg_dict['transition']['duration'] = 0
-                                arg_dict['frame']['redraw'] = True 
-                                arg_dict['fromcurrent'] = True
 
-                # Render Full Width
+                # Render
                 st.plotly_chart(
                     fig, 
                     use_container_width=True, 
