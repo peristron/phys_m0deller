@@ -157,7 +157,7 @@ if st.button("Generate Animation", type="primary"):
                         messages.append({"role": "user", "content": 
                             f"CRITICAL ERROR:\n{error_msg}\n\n"
                             "Fix the code and return ONLY valid, runnable Python. No markdown. No explanation."
-                        ))
+                        })
                         total_output += len(raw_code or "")
                     else:
                         st.error(f"Failed after 4 attempts. Last error: {error_msg}")
@@ -188,6 +188,7 @@ if "generated_code" in st.session_state:
 
         # --- GUARANTEE FRAMES ---
         if not hasattr(fig, "frames") or not fig.frames:
+            st.warning("No frames detected — injecting smooth orbit")
             theta = np.linspace(0, 2*np.pi, 100)
             x = np.cos(theta * 5)
             y = np.sin(theta * 5)
