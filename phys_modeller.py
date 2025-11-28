@@ -1,6 +1,5 @@
 # streamlit run phys_modeller.py
 #  directory setup: cd C:\users\oakhtar\documents\pyprojs_local
-
 import streamlit as st
 import openai
 import numpy as np
@@ -75,7 +74,7 @@ def main_app():
 
         st.divider()
         
-        # Cost Estimator in Sidebar Expander
+        # Cost Estimator
         with st.expander("💰 Cost Estimate", expanded=False):
             if "last_cost_data" in st.session_state:
                 c_in, c_out, t_in, t_out = st.session_state["last_cost_data"]
@@ -107,13 +106,14 @@ def main_app():
         
         STRICT CONSTRAINTS:
         1. Libraries: `numpy` (as np), `plotly.graph_objects` (as go), `streamlit` (as st).
-        2. NO infinite loops. Pre-calculate 40-60 frames.
+        2. NO infinite loops in Python. Pre-calculate 60 frames of data.
         3. **CRITICAL:** Define a figure variable named `fig`. 
         4. **CRITICAL:** Do NOT call `st.plotly_chart` or `fig.show()`. The host app will render `fig`.
         5. In `fig.layout.updatemenus`, set type='buttons' (Play/Pause).
-        6. Adhere to physics principles using NumPy vector math.
-        7. Output RAW CODE only (no markdown blocks).
-        8. Initialize all arrays as floats.
+        6. Try to create a seamless loop (make the data in the last frame approach the data in the first frame).
+        7. Adhere to physics principles using NumPy vector math.
+        8. Output RAW CODE only (no markdown blocks).
+        9. Initialize all arrays as floats.
         """
 
     def call_llm(messages, key, url, model):
@@ -161,12 +161,18 @@ def main_app():
         
         st.divider()
         
-        # --- Animation Controls ---
-        st.subheader("🎮 Animation Controls")
-        # Speed slider: 0ms (Fast) to 200ms (Slow)
-        anim_speed = st.slider("Frame Duration (ms)", min_value=0, max_value=200, value=20, step=10, help="Lower is faster.")
+        # --- Improved Animation Controls ---
+        st.subheader("🎮 Controls")
         
-        st.caption("Adjust slider to speed up/slow down playback.")
+        # We use a "Speed Factor" logic now. 
+        # 1 = Slow, 100 = Fast. 
+        # Default around 50 (Normal).
+        speed_factor = st.slider("⚡ Animation Speed", min_value=1, max_value=100, value=50, help="Slide right to make the animation faster.")
+        
+        # Math: If speed is 100, duration is 10ms. If speed is 1, duration is 1000ms.
+        frame_duration = int(1000 / speed_factor)
+        
+        st.caption(f"Current Setting: {frame_duration}ms per frame")
 
     with col2:
         if "generated_code" not in st.session_state:
@@ -197,17 +203,28 @@ def main_app():
                 # 2. Execute code (Defines 'fig', does not render)
                 exec(st.session_state["generated_code"], exec_globals)
                 
-                # 3. Extract Figure
+                # 3. Extract Figure & Apply Speed
                 if "fig" in exec_globals:
                     fig = exec_globals["fig"]
                     
-                    # 4. Apply Speed Control dynamically
-                    # Update duration for all buttons (Play) and frames
+                    # Apply the calculated speed (duration) to buttons and frames
                     if fig.layout.updatemenus:
                         for button in fig.layout.updatemenus[0].buttons:
-                            button.args[1]['frame']['duration'] = anim_speed
+                            if "args" in button:
+                                # Attempt to set duration in the button args
+                                # This controls how fast the 'Play' button triggers the next frame
+                                try:
+                                    button.args[1]['frame']['duration'] = frame_duration
+                                except:
+                                    pass
                     
-                    # 5. Render
+                    # Also update the frames themselves just in case
+                    # (Plotly sometimes respects the frame duration over the button duration)
+                    # Note: This loop is fast for <100 frames
+                    if fig.frames:
+                         for fr in fig.frames:
+                             fr.duration = frame_duration
+
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.error("Code executed but `fig` variable was not defined.")
