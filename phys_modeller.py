@@ -173,6 +173,7 @@ if st.button("Generate Animation", type="primary"):
         st.session_state.generated_code = final_code
 
 # --- RENDER ---
+# === RENDERING (FINAL, CORRECT VERSION) ===
 if "generated_code" in st.session_state:
     code = st.session_state.generated_code
 
@@ -188,32 +189,57 @@ if "generated_code" in st.session_state:
         exec(code, env)
         fig = env["fig"]
 
-        # --- MOVE PLAY/PAUSE ABOVE CHART ---
+        # === FIX ANIMATION SPEED ===
         if fig.layout.updatemenus:
-            buttons = fig.layout.updatemenus[0].buttons
-            for btn in buttons:
+            for btn in fig.layout.updatemenus[0].buttons:
                 if btn.label == "Play" and btn.args and len(btn.args) > 1:
                     if isinstance(btn.args[1], dict):
                         btn.args[1]["frame"]["duration"] = frame_ms
+                        btn.args[1]["transition"]["duration"] = 0
 
-            # Custom buttons above chart
-            col1, col2, col3 = st.columns([1, 1, 8])
-            with col1:
-                if st.button("Play", use_container_width=True):
-                    st.rerun()
-            with col2:
-                if st.button("Pause", use_container_width=True):
-                    pass  # Handled by Plotly
+        # === MOVE PLAY/PAUSE BUTTONS ABOVE CHART (THE RIGHT WAY) ===
+        # Extract buttons
+        play_pause_buttons = None
+        if fig.layout.updatemenus:
+            play_pause_buttons = fig.layout.updatemenus[0].to_plotly_json()
+            play_pause_buttons.update({
+                "y": 1.15,           # Above the chart
+                "x": 0.0,
+                "xanchor": "left",
+                "yanchor": "top",
+                "bgcolor": "rgba(255,255,255,0.9)",
+                "bordercolor": "#333",
+                "borderwidth": 1
+            })
 
+        # Clean layout (remove old buttons)
         fig.update_layout(
+            updatemenus=[],
             height=800,
-            margin=dict(l=0, r=0, t=30, b=0),
+            margin=dict(l=0, r=0, t=60, b=0),
             title="AI-Generated Physics Simulation",
             title_x=0.5,
             scene=dict(aspectmode='data')
         )
 
-        st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False, "scrollZoom": True})
+        # === SHOW CUSTOM BUTTONS ABOVE ===
+        if play_pause_buttons:
+            col1, col2, col3 = st.columns([1, 1, 8])
+            with col1:
+                if st.button("Play", use_container_width=True):
+                    pass  # Plotly handles it
+            with col2:
+                if st.button("Pause", use_container_width=True):
+                    pass  # Plotly handles it
+
+        # === RENDER CHART WITH BUTTONS ABOVE ===
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config={"displaylogo": False, "scrollZoom": True},
+            # This is the magic: inject buttons above
+            **({"updatemenus": [play_pause_buttons]} if play_pause_buttons else {})
+        )
 
     except Exception as e:
         st.error(f"Render failed: {e}")
