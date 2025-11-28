@@ -7,10 +7,9 @@ import plotly.graph_objects as go
 import hashlib
 import re
 
-# --- CONFIG ---
 st.set_page_config(page_title="GenAI Physics Modeler", page_icon="atom", layout="wide")
 
-# --- PRICING (Nov 2025) ---
+# --- PRICING ---
 PRICING = {
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
     "gpt-4o": {"input": 2.50, "output": 10.00},
@@ -76,15 +75,25 @@ with st.sidebar:
         base_url = None
     else:
         model = "grok-4-1-fast-reasoning"
-        key = get_key("xai_api_key")
+        key = openai_key = get_key("xai_api_key")
         base_url = "https://api.x.ai/v1"
 
     if not key:
         st.error("Missing API key")
         st.stop()
 
-    speed = st.slider("Animation Speed", 1, 100, 40)
+    speed = st.slider("Animation Speed", 1, 100, 40, help="Higher = faster")
     frame_ms = max(10, 1000 // speed)
+
+    # --- COST ESTIMATOR ---
+    st.divider()
+    st.subheader("Live Cost")
+    if "last_cost" in st.session_state:
+        cost = st.session_state.last_cost
+        st.metric("Total Cost", f"${cost:.4f}")
+        st.caption(f"Using {model}")
+    else:
+        st.info("Cost appears after first generation")
 
 st.title("Generative Physics Modeler")
 st.caption("Describe a physics scene → get a real-time 3D animation")
@@ -102,6 +111,7 @@ if st.button("Generate Animation", type="primary"):
     if cached:
         st.success("Loaded from cache!")
         st.session_state.generated_code = cached
+        st.session_state.last_cost = 0.0
     else:
         with st.status(f"Generating with {model}...", expanded=True) as status:
             st.write("Sending to AI...")
@@ -110,6 +120,9 @@ if st.button("Generate Animation", type="primary"):
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_input}
             ]
+
+            total_input = len(user_input)
+            total_output = 0
 
             for attempt in range(4):
                 try:
@@ -132,6 +145,7 @@ if st.button("Generate Animation", type="primary"):
 
                     final_code = code
                     set_cached_code(prompt_hash, code)
+                    total_output += len(raw_code)
                     status.update(label="Success!", state="complete")
                     break
 
@@ -144,13 +158,21 @@ if st.button("Generate Animation", type="primary"):
                             f"CRITICAL ERROR:\n{error_msg}\n\n"
                             "Fix the code and return ONLY valid, runnable Python. No markdown. No explanation."
                         })
+                        total_output += len(raw_code or "")
                     else:
                         st.error(f"Failed after 4 attempts. Last error: {error_msg}")
                         st.code(raw_code, language="python")
                         st.stop()
 
+            # Calculate cost
+            in_cost = (total_input / 1_000_000) * PRICING[model]["input"]
+            out_cost = (total_output / 1_000_000) * PRICING[model]["output"]
+            total_cost = in_cost + out_cost
+            st.session_state.last_cost = total_cost
+
         st.session_state.generated_code = final_code
 
+# --- RENDER ---
 if "generated_code" in st.session_state:
     code = st.session_state.generated_code
 
@@ -166,6 +188,23 @@ if "generated_code" in st.session_state:
         exec(code, env)
         fig = env["fig"]
 
+        # --- MOVE PLAY/PAUSE ABOVE CHART ---
+        if fig.layout.updatemenus:
+            buttons = fig.layout.updatemenus[0].buttons
+            for btn in buttons:
+                if btn.label == "Play" and btn.args and len(btn.args) > 1:
+                    if isinstance(btn.args[1], dict):
+                        btn.args[1]["frame"]["duration"] = frame_ms
+
+            # Custom buttons above chart
+            col1, col2, col3 = st.columns([1, 1, 8])
+            with col1:
+                if st.button("Play", use_container_width=True):
+                    st.rerun()
+            with col2:
+                if st.button("Pause", use_container_width=True):
+                    pass  # Handled by Plotly
+
         fig.update_layout(
             height=800,
             margin=dict(l=0, r=0, t=30, b=0),
@@ -173,12 +212,6 @@ if "generated_code" in st.session_state:
             title_x=0.5,
             scene=dict(aspectmode='data')
         )
-
-        if fig.layout.updatemenus:
-            for btn in fig.layout.updatemenus[0].buttons:
-                if btn.label == "Play" and btn.args and len(btn.args) > 1:
-                    if isinstance(btn.args[1], dict):
-                        btn.args[1]["frame"]["duration"] = frame_ms
 
         st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False, "scrollZoom": True})
 
