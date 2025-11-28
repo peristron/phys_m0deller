@@ -184,7 +184,7 @@ if st.button("Generate Animation", type="primary"):
 
         st.session_state.generated_code = final_code
 
-# === FINAL RENDERING: PLAY/PAUSE IN SIDEBAR + AUTO-PLAY ===
+# === FINAL RENDERING: PLAY/PAUSE IN SIDEBAR
 if "generated_code" in st.session_state:
     code = st.session_state.generated_code
 
@@ -217,9 +217,10 @@ if "generated_code" in st.session_state:
                     if isinstance(btn.args[1], dict):
                         btn.args[1]["frame"]["duration"] = frame_ms
 
-        # --- REMOVE PLOTLY BUTTONS ---
+        # --- HIDE PLOTLY'S NATIVE BUTTONS COMPLETELY ---
         fig.update_layout(
             updatemenus=[],
+            sliders=[],
             height=800,
             margin=dict(l=0, r=0, t=60, b=0),
             title="AI-Generated Physics Simulation",
@@ -227,28 +228,26 @@ if "generated_code" in st.session_state:
             scene=dict(aspectmode='data')
         )
 
-        # --- RENDER ---
+        # --- RENDER CHART ---
         st.plotly_chart(
             fig,
             use_container_width=True,
-            config={"displaylogo": False, "scrollZoom": True},
+            config={"displaylogo": False, "scrollZoom": True, "modeBarButtonsToRemove": ["resetCameraDefault3d", "resetCameraLastSave3d"]},
             key=f"plot_{hash(user_input)}_{st.session_state.animating}"
         )
 
-        # --- AUTO-PLAY VIA JS (FIXED) ---
+        # --- SIDEBAR PLAY/PAUSE (NOW WORKS) ---
         if st.session_state.animating:
             st.components.v1.html(
                 f"""
                 <script>
-                const plot = document.querySelector('.js-plotly-plot');
+                const plot = document.querySelector('[data-testid="stPlotlyChart"] .js-plotly-plot');
                 if (plot) {{
-                    setTimeout(() => {{
-                        Plotly.animate(plot, null, {{
-                            frame: {{duration: {frame_ms}, redraw: true}},
-                            transition: {{duration: 0}},
-                            fromcurrent: true
-                        }});
-                    }}, 500);
+                    Plotly.animate(plot, null, {{
+                        frame: {{duration: {frame_ms}, redraw: true}},
+                        transition: {{duration: 0}},
+                        fromcurrent: true
+                    }});
                 }}
                 </script>
                 """,
