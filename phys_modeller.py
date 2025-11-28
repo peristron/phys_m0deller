@@ -95,20 +95,6 @@ with st.sidebar:
     else:
         st.info("Cost appears after first generation")
 
-    # --- PLAY/PAUSE IN SIDEBAR ---
-    st.divider()
-    st.subheader("Animation Control")
-    col_play, col_pause = st.columns(2)
-    with col_play:
-        if st.button("Play", use_container_width=True, type="primary"):
-            st.session_state.animating = True
-    with col_pause:
-        if st.button("Pause", use_container_width=True):
-            st.session_state.animating = False
-
-    if "animating" not in st.session_state:
-        st.session_state.animating = True
-
 st.title("Generative Physics Modeler")
 st.caption("Describe a physics scene → get a real-time 3D animation")
 
@@ -246,3 +232,4 @@ if "generated_code" in st.session_state:
     except Exception as e:
         st.error(f"Render failed: {e}")
         st.code(code, language="python")
+
