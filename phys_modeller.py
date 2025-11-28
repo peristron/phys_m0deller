@@ -132,37 +132,17 @@ def main_app():
         
         for attempt in range(max_retries + 1):
             try:
-                # --- IMPROVED SELF-HEALING ---
-                # Instead of just checking syntax (compile), we actually RUN the code
-                # in a sandbox to catch RuntimeErrors (like matrix mismatches).
-                # We mock 'st' to prevent it from drawing charts during this test phase.
-                
-                test_globals = {
-                    "st": st, # We allow st, but since code shouldn't call st.plotly_chart, it's safe
-                    "np": np, 
-                    "go": go, 
-                    "__name__": "__main__"
-                }
-                
-                # Execute to find math errors
+                test_globals = {"st": st, "np": np, "go": go, "__name__": "__main__"}
                 exec(code, test_globals)
-                
-                # Check if 'fig' was actually defined
-                if "fig" not in test_globals:
-                    raise ValueError("The code ran but did not define the variable 'fig'.")
-                
+                if "fig" not in test_globals: raise ValueError("No 'fig' defined.")
                 return code, None, t_in, t_out
-                
             except Exception as e:
                 if attempt < max_retries:
-                    # Catch math error, send back to AI
-                    err_prompt = f"Runtime Error: {str(e)}. Fix the code (check matrix dimensions/shapes) and return ONLY valid Python."
+                    err_prompt = f"Runtime Error: {str(e)}. Fix code/matrix shapes and return ONLY valid Python."
                     messages.append({"role": "assistant", "content": code})
                     messages.append({"role": "user", "content": err_prompt})
-                    
                     raw_code = call_llm(messages, key, url, model)
                     code = clean_code(raw_code)
-                    
                     t_in += err_prompt; t_out += raw_code
                 else:
                     return None, str(e), t_in, t_out
@@ -184,11 +164,7 @@ def main_app():
         
         # --- Controls ---
         st.subheader("🎮 Controls")
-        
-        # Speed: 1 (Slow) to 100 (Fast)
         speed_factor = st.slider("⚡ Animation Speed", min_value=1, max_value=100, value=50)
-        
-        # Math: 1000ms / speed. 
         frame_duration = int(1000 / speed_factor)
         st.caption(f"Setting: {frame_duration}ms / frame")
 
@@ -198,7 +174,6 @@ def main_app():
 
         if generate_btn:
             with st.spinner(f"Simulating ({model_name})..."):
-                # This now executes the code internally to check for math errors before returning
                 final_code, error, in_txt, out_txt = generate_with_retry(user_instruction, api_key, base_url, model_name)
                 
                 if final_code:
@@ -207,23 +182,16 @@ def main_app():
                     st.session_state["last_cost_data"] = (c_in, c_out, t_in, t_out)
                     st.rerun()
                 else:
-                    st.error(f"Generation failed after retries: {error}")
+                    st.error(f"Generation failed: {error}")
 
         if st.session_state["generated_code"]:
-            # --- Code & Download Layout ---
             d_col1, d_col2 = st.columns([1, 3])
             with d_col1:
-                st.download_button(
-                    label="📥 Download .py", 
-                    data=st.session_state["generated_code"], 
-                    file_name="simulation.py", 
-                    mime="text/x-python"
-                )
+                st.download_button("📥 Download .py", st.session_state["generated_code"], "simulation.py", "text/x-python")
             with d_col2:
                 with st.expander("View Python Code"):
                     st.code(st.session_state["generated_code"], language='python')
 
-            # --- Execute and Render ---
             try:
                 exec_globals = {"st": st, "np": np, "go": go, "__name__": "__main__"}
                 exec(st.session_state["generated_code"], exec_globals)
@@ -231,17 +199,26 @@ def main_app():
                 if "fig" in exec_globals:
                     fig = exec_globals["fig"]
                     
-                    # --- Apply Dynamic Speed Logic ---
-                    if fig.layout.updatemenus:
-                        for menu in fig.layout.updatemenus:
-                            if menu.type == 'buttons':
-                                for button in menu.buttons:
-                                    if button.label == 'Play':
-                                        if hasattr(button, 'args') and len(button.args) > 1:
-                                            button.args[1]['frame']['duration'] = frame_duration
-                                            button.args[1]['transition']['duration'] = 0
+                    # --- Apply Dynamic Speed Logic (Fixed for robustness) ---
+                    try:
+                        if fig.layout.updatemenus:
+                            for menu in fig.layout.updatemenus:
+                                if menu.type == 'buttons':
+                                    for button in menu.buttons:
+                                        if button.label == 'Play':
+                                            if hasattr(button, 'args') and len(button.args) > 1:
+                                                arg_dict = button.args[1]
+                                                
+                                                # Robustly ensure keys exist before assignment
+                                                if 'frame' not in arg_dict: arg_dict['frame'] = {}
+                                                arg_dict['frame']['duration'] = frame_duration
+                                                
+                                                if 'transition' not in arg_dict: arg_dict['transition'] = {}
+                                                arg_dict['transition']['duration'] = 0
+                    except Exception as e:
+                        # If speed optimization fails, just log it but render the chart anyway
+                        print(f"Optimization warning: {e}")
                                             
-                    # Unique key forces reload on speed change
                     st.plotly_chart(fig, use_container_width=True, key=f"sim_chart_{speed_factor}")
                     
                 else:
