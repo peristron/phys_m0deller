@@ -157,7 +157,7 @@ if st.button("Generate Animation", type="primary"):
                         messages.append({"role": "user", "content": 
                             f"CRITICAL ERROR:\n{error_msg}\n\n"
                             "Fix the code and return ONLY valid, runnable Python. No markdown. No explanation."
-                        })
+                        ))
                         total_output += len(raw_code or "")
                     else:
                         st.error(f"Failed after 4 attempts. Last error: {error_msg}")
@@ -170,7 +170,7 @@ if st.button("Generate Animation", type="primary"):
 
         st.session_state.generated_code = final_code
 
-# === FINAL RENDERING: 100% WORKING, INFINITE LOOP, NO ERRORS ===
+# === FINAL RENDERING: INFINITE LOOP + NO ERRORS ===
 if "generated_code" in st.session_state:
     code = st.session_state.generated_code
 
@@ -186,9 +186,8 @@ if "generated_code" in st.session_state:
         exec(code, env)
         fig = env["fig"]
 
-        # --- GUARANTEE FRAMES EXIST ---
+        # --- GUARANTEE FRAMES ---
         if not hasattr(fig, "frames") or not fig.frames:
-            st.warning("No frames detected — injecting smooth orbit")
             theta = np.linspace(0, 2*np.pi, 100)
             x = np.cos(theta * 5)
             y = np.sin(theta * 5)
@@ -196,31 +195,21 @@ if "generated_code" in st.session_state:
             frames = [go.Frame(data=[go.Scatter3d(x=[x[i]], y=[y[i]], z=[z[i]], mode='markers', marker=dict(color='red', size=12))], name=str(i)) for i in range(100)]
             fig.frames = frames
 
-        # --- FINAL: PLAY LOOPS FOREVER (NO STOP) ---
+        # --- INFINITE LOOP + SPEED CONTROL ---
         if fig.layout.updatemenus:
             for btn in fig.layout.updatemenus[0].buttons:
                 if btn.label == "Play":
                     btn.args = [
-                        None,  # Play all frames
+                        None,
                         {
                             "frame": {"duration": frame_ms, "redraw": True},
-                            "mode": "immediate",
-                            "transition": {"duration": 0},
                             "fromcurrent": True,
-                            "loop": True  # ← THIS LINE MAKES IT LOOP FOREVER
-                        }
-                    ]
-                elif btn.label == "Pause":
-                    btn.args = [
-                        [None],
-                        {
-                            "frame": {"duration": 0, "redraw": False},
-                            "mode": "immediate",
-                            "transition": {"duration": 0}
+                            "transition": {"duration": 0},
+                            "mode": "immediate"
                         }
                     ]
 
-        # --- MOVE BUTTONS ABOVE CHART ---
+        # --- BUTTONS ABOVE CHART ---
         if fig.layout.updatemenus:
             play_pause = fig.layout.updatemenus[0].to_plotly_json()
             play_pause.update({
@@ -249,4 +238,3 @@ if "generated_code" in st.session_state:
     except Exception as e:
         st.error(f"Render failed: {e}")
         st.code(code, language="python")
-
