@@ -180,28 +180,30 @@ def main_app():
                 st.warning("Key Missing")
                 generate_btn = False
 
-    # --- Status Placeholder ---
-    status_placeholder = st.empty()
-
     if "generated_code" not in st.session_state:
         st.session_state["generated_code"] = None
 
     if generate_btn:
         st.session_state["generated_code"] = None 
-        with status_placeholder.container():
-            st.info(f"⚛️ Initializing Physics Engine ({model_name})... Please wait.")
+        
+        # --- VISIBLE STATUS INDICATOR ---
+        # Using st.status to show a persistent log of what's happening
+        with st.status(f"⚛️ Simulating with {model_name}...", expanded=True) as status:
+            st.write("Calculating Physics Vectors...")
             final_code, error, in_txt, out_txt = generate_with_retry(user_instruction, api_key, base_url, model_name)
             
             if final_code:
+                st.write("Compiling Python...")
                 st.session_state["generated_code"] = final_code
                 c_in, c_out, t_in, t_out = estimate_cost(in_txt, out_txt, model_name)
                 st.session_state["last_cost_data"] = (c_in, c_out, t_in, t_out)
+                status.update(label="Simulation Ready!", state="complete", expanded=False)
                 st.rerun()
             else:
-                st.error(f"Generation failed: {error}")
+                status.update(label="Generation Failed", state="error")
+                st.error(f"Error: {error}")
 
     if st.session_state["generated_code"]:
-        status_placeholder.empty() 
 
         # --- Download / Code View ---
         with st.expander("View Source Code & Download"):
@@ -229,13 +231,15 @@ def main_app():
 
                 # --- ROBUST UI FIXES ---
                 if fig.layout.updatemenus:
-                    # FIX VISIBILITY
+                    # FIX VISIBILITY & POSITION
+                    # Changed y to 1.0 (Top) and yanchor to 'top'
                     fig.update_layout(
                         updatemenus=[
                             dict(
                                 type="buttons",
                                 direction="left",
-                                x=0.1, y=0.05, # Slightly higher to avoid being cut off
+                                x=0.0, y=1.0, # TOP LEFT CORNER
+                                xanchor="left", yanchor="top",
                                 showactive=True,
                                 bgcolor="white",
                                 bordercolor="#333",
