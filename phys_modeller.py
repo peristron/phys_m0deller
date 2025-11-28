@@ -105,12 +105,12 @@ def main_app():
         
         STRICT CONSTRAINTS:
         1. Libraries: `numpy` (as np), `plotly.graph_objects` (as go), `streamlit` (as st).
-        2. NO infinite loops. Pre-calculate 60-90 frames of data.
+        2. NO infinite loops. Pre-calculate 60 frames of data.
         3. **CRITICAL:** Define a figure variable named `fig`. 
         4. **CRITICAL:** Do NOT call `st.plotly_chart` or `fig.show()`. The host app will render `fig`.
-        5. In `fig.layout.updatemenus`, set type='buttons' (Play/Pause).
+        5. In `fig.layout.updatemenus`, set type='buttons' with 'Play' and 'Pause' buttons.
         6. Ensure the simulation loops seamlessly.
-        7. Adhere to physics principles using NumPy vector math.
+        7. **IMPORTANT:** When defining frames, ensure you update the specific data of the traces (e.g. fig.data[0].x = ...).
         8. Output RAW CODE only (no markdown blocks).
         9. Initialize all arrays as floats.
         """
@@ -199,26 +199,48 @@ def main_app():
                 if "fig" in exec_globals:
                     fig = exec_globals["fig"]
                     
-                    # --- Apply Dynamic Speed Logic (Fixed for robustness) ---
-                    try:
-                        if fig.layout.updatemenus:
-                            for menu in fig.layout.updatemenus:
-                                if menu.type == 'buttons':
-                                    for button in menu.buttons:
-                                        if button.label == 'Play':
-                                            if hasattr(button, 'args') and len(button.args) > 1:
-                                                arg_dict = button.args[1]
-                                                
-                                                # Robustly ensure keys exist before assignment
-                                                if 'frame' not in arg_dict: arg_dict['frame'] = {}
-                                                arg_dict['frame']['duration'] = frame_duration
-                                                
-                                                if 'transition' not in arg_dict: arg_dict['transition'] = {}
-                                                arg_dict['transition']['duration'] = 0
-                    except Exception as e:
-                        # If speed optimization fails, just log it but render the chart anyway
-                        print(f"Optimization warning: {e}")
-                                            
+                    # --- ROBUST POST-PROCESSING ---
+                    # We assume the AI might mess up button visibility or speed.
+                    # We forcefully overwrite the button styling here.
+                    
+                    if fig.layout.updatemenus:
+                        # 1. FIX VISIBILITY: Force high-contrast styling
+                        fig.update_layout(
+                            updatemenus=[
+                                dict(
+                                    type="buttons",
+                                    direction="left",
+                                    x=0.1, y=0, # Position near bottom
+                                    showactive=True,
+                                    bgcolor="white",
+                                    bordercolor="#333",
+                                    borderwidth=1,
+                                    font=dict(color="black", size=12),
+                                    pad={"r": 10, "t": 10},
+                                    buttons=fig.layout.updatemenus[0].buttons # Keep the logic, change the style
+                                )
+                            ]
+                        )
+
+                        # 2. FIX SPEED & REDRAW: Inject speed settings
+                        for button in fig.layout.updatemenus[0].buttons:
+                            if button.label == 'Play':
+                                if hasattr(button, 'args') and len(button.args) > 1:
+                                    arg_dict = button.args[1]
+                                    
+                                    # Create keys if missing
+                                    if 'frame' not in arg_dict: arg_dict['frame'] = {}
+                                    if 'transition' not in arg_dict: arg_dict['transition'] = {}
+                                    
+                                    # Apply Speed
+                                    arg_dict['frame']['duration'] = frame_duration
+                                    arg_dict['transition']['duration'] = 0
+                                    
+                                    # FORCE REDRAW: Solves "Static Animation" bug
+                                    arg_dict['frame']['redraw'] = True 
+                                    arg_dict['fromcurrent'] = True
+
+                    # Render with unique key to force refresh on slider change
                     st.plotly_chart(fig, use_container_width=True, key=f"sim_chart_{speed_factor}")
                     
                 else:
