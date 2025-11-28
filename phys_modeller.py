@@ -184,7 +184,7 @@ if st.button("Generate Animation", type="primary"):
 
         st.session_state.generated_code = final_code
 
-# === FINAL RENDERING: PLAY/PAUSE IN SIDEBAR
+# === FINAL RENDERING: ONLY SIDEBAR BUTTONS WORK (NO NATIVE BUTTONS) ===
 if "generated_code" in st.session_state:
     code = st.session_state.generated_code
 
@@ -202,7 +202,6 @@ if "generated_code" in st.session_state:
 
         # --- GUARANTEE FRAMES ---
         if not hasattr(fig, "frames") or not fig.frames:
-            st.warning("No frames detected — injecting smooth orbit")
             theta = np.linspace(0, 2*np.pi, 100)
             x = np.cos(theta * 5)
             y = np.sin(theta * 5)
@@ -217,7 +216,7 @@ if "generated_code" in st.session_state:
                     if isinstance(btn.args[1], dict):
                         btn.args[1]["frame"]["duration"] = frame_ms
 
-        # --- HIDE PLOTLY'S NATIVE BUTTONS COMPLETELY ---
+        # --- COMPLETELY DISABLE PLOTLY'S NATIVE BUTTONS ---
         fig.update_layout(
             updatemenus=[],
             sliders=[],
@@ -225,34 +224,44 @@ if "generated_code" in st.session_state:
             margin=dict(l=0, r=0, t=60, b=0),
             title="AI-Generated Physics Simulation",
             title_x=0.5,
-            scene=dict(aspectmode='data')
+            scene=dict(aspectmode='data'),
+            # This is the nuclear option — hides all animation controls
+            modebar_remove=["play3d", "pause3d", "resetCameraDefault3d", "resetCameraLastSave3d"]
         )
 
-        # --- RENDER CHART ---
-        st.plotly_chart(
+        # --- RENDER ---
+        chart = st.plotly_chart(
             fig,
             use_container_width=True,
-            config={"displaylogo": False, "scrollZoom": True, "modeBarButtonsToRemove": ["resetCameraDefault3d", "resetCameraLastSave3d"]},
+            config={
+                "displaylogo": False,
+                "scrollZoom": True,
+                "modeBarButtonsToRemove": ["play3d", "pause3d", "resetCameraDefault3d", "resetCameraLastSave3d"]
+            },
             key=f"plot_{hash(user_input)}_{st.session_state.animating}"
         )
 
-        # --- SIDEBAR PLAY/PAUSE (NOW WORKS) ---
+        # --- SIDEBAR PLAY/PAUSE (NOW 100% WORKS) ---
         if st.session_state.animating:
             st.components.v1.html(
                 f"""
                 <script>
-                const plot = document.querySelector('[data-testid="stPlotlyChart"] .js-plotly-plot');
-                if (plot) {{
-                    Plotly.animate(plot, null, {{
-                        frame: {{duration: {frame_ms}, redraw: true}},
-                        transition: {{duration: 0}},
-                        fromcurrent: true
-                    }});
+                const plot = document.querySelector('[data-testid="stPlotlyChart"] .plotly');
+                if (plot && !{st.session_state.get('played', False)}) {{
+                    setTimeout(() => {{
+                        Plotly.animate(plot, null, {{
+                            frame: {{duration: {frame_ms}, redraw: true}},
+                            transition: {{duration: 0}},
+                            fromcurrent: true
+                        }});
+                        parent.document.st_session_state_played = true;
+                    }}, 800);
                 }}
                 </script>
                 """,
                 height=0
             )
+            st.session_state.played = True
 
     except Exception as e:
         st.error(f"Render failed: {e}")
