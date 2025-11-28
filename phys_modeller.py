@@ -18,11 +18,36 @@ PRICING = {
     "grok-beta": {"input": 5.00, "output": 15.00} # Conservative estimate
 }
 
+# --- Helper: Safe Secret Retrieval ---
+def get_secret(key_name):
+    """
+    Tries to fetch a secret from st.secrets in a case-insensitive way.
+    Returns None if not found.
+    """
+    # 1. Try exact match
+    if key_name in st.secrets:
+        return st.secrets[key_name]
+    # 2. Try all uppercase
+    if key_name.upper() in st.secrets:
+        return st.secrets[key_name.upper()]
+    # 3. Try all lowercase
+    if key_name.lower() in st.secrets:
+        return st.secrets[key_name.lower()]
+    return None
+
 # --- Authentication Logic ---
 def check_password():
     """Returns `True` if the user had the correct password."""
+    
+    # Retrieve the password from secrets safely
+    stored_password = get_secret("app_password")
+    
+    if not stored_password:
+        st.error("❌ Configuration Error: 'app_password' not found in Streamlit Secrets.")
+        st.stop()
+
     def password_entered():
-        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
+        if st.session_state["password"] == stored_password:
             st.session_state["password_correct"] = True
             del st.session_state["password"]
         else:
@@ -51,23 +76,21 @@ def main_app():
     base_url = None
     model_name = ""
     
-    try:
-        if provider == "OpenAI":
-            if "OPENAI_API_KEY" in st.secrets:
-                api_key = st.secrets["OPENAI_API_KEY"]
-                model_name = "gpt-4o" 
-            else:
-                st.sidebar.error("Missing 'OPENAI_API_KEY' in secrets.")
-                
-        elif provider == "xAI (Grok)":
-            if "XAI_API_KEY" in st.secrets:
-                api_key = st.secrets["XAI_API_KEY"]
-                base_url = "https://api.x.ai/v1"
-                model_name = "grok-beta"
-            else:
-                st.sidebar.error("Missing 'XAI_API_KEY' in secrets.")
-    except FileNotFoundError:
-        st.error("Secrets file not found. Please set up your .streamlit/secrets.toml")
+    # Safe retrieval of API keys
+    if provider == "OpenAI":
+        api_key = get_secret("openai_api_key")
+        if api_key:
+            model_name = "gpt-4o" 
+        else:
+            st.sidebar.error("Missing 'openai_api_key' in secrets.")
+            
+    elif provider == "xAI (Grok)":
+        api_key = get_secret("xai_api_key")
+        if api_key:
+            base_url = "https://api.x.ai/v1"
+            model_name = "grok-beta"
+        else:
+            st.sidebar.error("Missing 'xai_api_key' in secrets.")
 
     # --- Helper Functions ---
     def clean_code(code):
@@ -142,19 +165,8 @@ def main_app():
         # 2. Validation Loop
         for attempt in range(max_retries + 1):
             try:
-                # Try to compile the code to check for syntax errors without running it yet
-                # or just create the globals and run it.
-                # We will actually run it in the main loop, but here we check for errors.
-                # To be safe, we just return the code to the main loop, but we need to know if it's broken.
-                # Let's define a test execution environment.
-                test_globals = {"st": st, "np": np, "go": go, "__name__": "__main__"}
-                
-                # We intentionally DO NOT run exec() here fully because it draws charts. 
-                # But to catch syntax/runtime errors, we must run it.
-                # We will assume if compile() works, syntax is okay. Runtime is harder.
+                # Syntax check via compilation
                 compile(code, '<string>', 'exec')
-                
-                # If we get here, syntax is valid-ish.
                 return code, None, total_input_text, total_output_text
                 
             except Exception as e:
@@ -265,3 +277,4 @@ def main_app():
 if __name__ == "__main__":
     if check_password():
         main_app()
+
