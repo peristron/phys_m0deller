@@ -51,7 +51,7 @@ def check_password():
 def main_app():
     st.title("⚛️ Generative Physics Modeler")
 
-    # --- Sidebar: Configuration & Cost ---
+    # --- Sidebar ---
     with st.sidebar:
         st.header("Configuration")
         provider = st.radio("Select Provider", ["OpenAI", "xAI (Grok)"])
@@ -74,7 +74,6 @@ def main_app():
 
         st.divider()
         
-        # Cost Estimator
         with st.expander("💰 Cost Estimate", expanded=False):
             if "last_cost_data" in st.session_state:
                 c_in, c_out, t_in, t_out = st.session_state["last_cost_data"]
@@ -106,11 +105,11 @@ def main_app():
         
         STRICT CONSTRAINTS:
         1. Libraries: `numpy` (as np), `plotly.graph_objects` (as go), `streamlit` (as st).
-        2. NO infinite loops in Python. Pre-calculate 60 frames of data.
+        2. NO infinite loops. Pre-calculate 60-90 frames of data.
         3. **CRITICAL:** Define a figure variable named `fig`. 
         4. **CRITICAL:** Do NOT call `st.plotly_chart` or `fig.show()`. The host app will render `fig`.
         5. In `fig.layout.updatemenus`, set type='buttons' (Play/Pause).
-        6. Try to create a seamless loop (make the data in the last frame approach the data in the first frame).
+        6. Ensure the simulation loops seamlessly (last frame data should approach first frame data).
         7. Adhere to physics principles using NumPy vector math.
         8. Output RAW CODE only (no markdown blocks).
         9. Initialize all arrays as floats.
@@ -161,16 +160,16 @@ def main_app():
         
         st.divider()
         
-        # --- Improved Animation Controls ---
+        # --- Controls ---
         st.subheader("🎮 Controls")
         
-        # Speed Factor: 1 (Slow) to 100 (Fast).
-        speed_factor = st.slider("⚡ Animation Speed", min_value=1, max_value=100, value=50, help="Slide right to make the animation faster.")
+        # Speed: 1 (Slow) to 100 (Fast)
+        speed_factor = st.slider("⚡ Animation Speed", min_value=1, max_value=100, value=50)
         
-        # Math: Speed 100 -> 10ms delay. Speed 1 -> 1000ms delay.
+        # Math: 1000ms / speed. 
+        # Speed 100 = 10ms (Smooth/Fast). Speed 1 = 1000ms (Step-by-step).
         frame_duration = int(1000 / speed_factor)
-        
-        st.caption(f"Current Setting: {frame_duration}ms per frame")
+        st.caption(f"Setting: {frame_duration}ms / frame")
 
     with col2:
         if "generated_code" not in st.session_state:
@@ -189,40 +188,46 @@ def main_app():
                     st.error(f"Generation failed: {error}")
 
         if st.session_state["generated_code"]:
-            with st.expander("View Code", expanded=False):
-                st.code(st.session_state["generated_code"], language='python')
-                st.download_button("Download .py", st.session_state["generated_code"], "sim.py", "text/x-python")
+            # --- Code & Download Layout ---
+            # Clean layout: Download button LEFT, View Code Expander RIGHT
+            d_col1, d_col2 = st.columns([1, 3])
+            with d_col1:
+                st.download_button(
+                    label="📥 Download .py", 
+                    data=st.session_state["generated_code"], 
+                    file_name="simulation.py", 
+                    mime="text/x-python"
+                )
+            with d_col2:
+                with st.expander("View Python Code"):
+                    st.code(st.session_state["generated_code"], language='python')
 
             # --- Execute and Render ---
             try:
-                # 1. Setup execution context
                 exec_globals = {"st": st, "np": np, "go": go, "__name__": "__main__"}
-                
-                # 2. Execute code (Defines 'fig', does not render)
                 exec(st.session_state["generated_code"], exec_globals)
                 
-                # 3. Extract Figure & Apply Speed
                 if "fig" in exec_globals:
                     fig = exec_globals["fig"]
                     
-                    # FIXED: Safely apply speed to the Play Button only.
-                    # We do NOT iterate over fig.frames to set duration anymore.
-                    try:
-                        if fig.layout.updatemenus:
-                            for menu in fig.layout.updatemenus:
-                                if menu.type == 'buttons':
-                                    for button in menu.buttons:
-                                        if button.label == 'Play':
-                                            if len(button.args) > 1 and isinstance(button.args[1], dict):
-                                                # Update frame duration (speed)
-                                                button.args[1]['frame']['duration'] = frame_duration
-                                                # Update transition duration (smoothness)
-                                                button.args[1]['transition']['duration'] = 0
-                    except Exception as e:
-                        # If button structure varies, we skip optimization to prevent crash
-                        print(f"Could not update animation speed: {e}")
-
-                    st.plotly_chart(fig, use_container_width=True)
+                    # --- Apply Dynamic Speed Logic ---
+                    # 1. Update Play Button args
+                    if fig.layout.updatemenus:
+                        for menu in fig.layout.updatemenus:
+                            if menu.type == 'buttons':
+                                for button in menu.buttons:
+                                    if button.label == 'Play':
+                                        # Check if args exist and are mutable
+                                        if hasattr(button, 'args') and len(button.args) > 1:
+                                            # Force Frame Duration (Speed)
+                                            button.args[1]['frame']['duration'] = frame_duration
+                                            # Force Transition to 0 (Smoothness)
+                                            button.args[1]['transition']['duration'] = 0
+                                            
+                    # 2. Render with unique key to force reload on slider change
+                    # The key ensures Streamlit redraws the div completely
+                    st.plotly_chart(fig, use_container_width=True, key=f"sim_chart_{speed_factor}")
+                    
                 else:
                     st.error("Code executed but `fig` variable was not defined.")
             except Exception as e:
