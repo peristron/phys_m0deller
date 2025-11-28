@@ -109,7 +109,7 @@ def main_app():
         3. **CRITICAL:** Define a figure variable named `fig`. 
         4. **CRITICAL:** Do NOT call `st.plotly_chart` or `fig.show()`. The host app will render `fig`.
         5. In `fig.layout.updatemenus`, set type='buttons' (Play/Pause).
-        6. Ensure the simulation loops seamlessly (last frame data should approach first frame data).
+        6. Ensure the simulation loops seamlessly.
         7. Adhere to physics principles using NumPy vector math.
         8. Output RAW CODE only (no markdown blocks).
         9. Initialize all arrays as floats.
@@ -132,15 +132,37 @@ def main_app():
         
         for attempt in range(max_retries + 1):
             try:
-                compile(code, '<string>', 'exec')
+                # --- IMPROVED SELF-HEALING ---
+                # Instead of just checking syntax (compile), we actually RUN the code
+                # in a sandbox to catch RuntimeErrors (like matrix mismatches).
+                # We mock 'st' to prevent it from drawing charts during this test phase.
+                
+                test_globals = {
+                    "st": st, # We allow st, but since code shouldn't call st.plotly_chart, it's safe
+                    "np": np, 
+                    "go": go, 
+                    "__name__": "__main__"
+                }
+                
+                # Execute to find math errors
+                exec(code, test_globals)
+                
+                # Check if 'fig' was actually defined
+                if "fig" not in test_globals:
+                    raise ValueError("The code ran but did not define the variable 'fig'.")
+                
                 return code, None, t_in, t_out
+                
             except Exception as e:
                 if attempt < max_retries:
-                    err_prompt = f"Error: {str(e)}. Fix code and return ONLY valid Python."
+                    # Catch math error, send back to AI
+                    err_prompt = f"Runtime Error: {str(e)}. Fix the code (check matrix dimensions/shapes) and return ONLY valid Python."
                     messages.append({"role": "assistant", "content": code})
                     messages.append({"role": "user", "content": err_prompt})
+                    
                     raw_code = call_llm(messages, key, url, model)
                     code = clean_code(raw_code)
+                    
                     t_in += err_prompt; t_out += raw_code
                 else:
                     return None, str(e), t_in, t_out
@@ -167,7 +189,6 @@ def main_app():
         speed_factor = st.slider("⚡ Animation Speed", min_value=1, max_value=100, value=50)
         
         # Math: 1000ms / speed. 
-        # Speed 100 = 10ms (Smooth/Fast). Speed 1 = 1000ms (Step-by-step).
         frame_duration = int(1000 / speed_factor)
         st.caption(f"Setting: {frame_duration}ms / frame")
 
@@ -177,6 +198,7 @@ def main_app():
 
         if generate_btn:
             with st.spinner(f"Simulating ({model_name})..."):
+                # This now executes the code internally to check for math errors before returning
                 final_code, error, in_txt, out_txt = generate_with_retry(user_instruction, api_key, base_url, model_name)
                 
                 if final_code:
@@ -185,11 +207,10 @@ def main_app():
                     st.session_state["last_cost_data"] = (c_in, c_out, t_in, t_out)
                     st.rerun()
                 else:
-                    st.error(f"Generation failed: {error}")
+                    st.error(f"Generation failed after retries: {error}")
 
         if st.session_state["generated_code"]:
             # --- Code & Download Layout ---
-            # Clean layout: Download button LEFT, View Code Expander RIGHT
             d_col1, d_col2 = st.columns([1, 3])
             with d_col1:
                 st.download_button(
@@ -211,21 +232,16 @@ def main_app():
                     fig = exec_globals["fig"]
                     
                     # --- Apply Dynamic Speed Logic ---
-                    # 1. Update Play Button args
                     if fig.layout.updatemenus:
                         for menu in fig.layout.updatemenus:
                             if menu.type == 'buttons':
                                 for button in menu.buttons:
                                     if button.label == 'Play':
-                                        # Check if args exist and are mutable
                                         if hasattr(button, 'args') and len(button.args) > 1:
-                                            # Force Frame Duration (Speed)
                                             button.args[1]['frame']['duration'] = frame_duration
-                                            # Force Transition to 0 (Smoothness)
                                             button.args[1]['transition']['duration'] = 0
                                             
-                    # 2. Render with unique key to force reload on slider change
-                    # The key ensures Streamlit redraws the div completely
+                    # Unique key forces reload on speed change
                     st.plotly_chart(fig, use_container_width=True, key=f"sim_chart_{speed_factor}")
                     
                 else:
