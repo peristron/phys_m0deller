@@ -46,7 +46,7 @@ def get_cached_code(prompt_hash):
 def set_cached_code(prompt_hash, code):
     st.session_state[f"cache_{prompt_hash}"] = code
 
-# --- SYSTEM PROMPT (100% RELIABLE FRAMES) ---
+# --- SYSTEM PROMPT ---
 SYSTEM_PROMPT = """
 You are an expert Python physics animator using Plotly.
 
@@ -94,6 +94,20 @@ with st.sidebar:
         st.caption(f"Using {model}")
     else:
         st.info("Cost appears after first generation")
+
+    # --- PLAY/PAUSE IN SIDEBAR ---
+    st.divider()
+    st.subheader("Animation Control")
+    col_play, col_pause = st.columns(2)
+    with col_play:
+        if st.button("Play", use_container_width=True, type="primary"):
+            st.session_state.animating = True
+    with col_pause:
+        if st.button("Pause", use_container_width=True):
+            st.session_state.animating = False
+
+    if "animating" not in st.session_state:
+        st.session_state.animating = True
 
 st.title("Generative Physics Modeler")
 st.caption("Describe a physics scene → get a real-time 3D animation")
@@ -157,7 +171,8 @@ if st.button("Generate Animation", type="primary"):
                         messages.append({"role": "user", "content": 
                             f"CRITICAL ERROR:\n{error_msg}\n\n"
                             "Fix the code and return ONLY valid, runnable Python. No markdown. No explanation."
-                        })
+."
+                        ))
                         total_output += len(raw_code or "")
                     else:
                         st.error(f"Failed after 4 attempts. Last error: {error_msg}")
@@ -170,7 +185,7 @@ if st.button("Generate Animation", type="primary"):
 
         st.session_state.generated_code = final_code
 
-# === FINAL RENDERING: 100% WORKING ANIMATION ===
+# === FINAL RENDERING: PLAY/PAUSE IN SIDEBAR + AUTO-PLAY ===
 if "generated_code" in st.session_state:
     code = st.session_state.generated_code
 
@@ -186,14 +201,14 @@ if "generated_code" in st.session_state:
         exec(code, env)
         fig = env["fig"]
 
-        # --- GUARANTEE ANIMATION WORKS ---
+        # --- GUARANTEE FRAMES ---
         if not hasattr(fig, "frames") or not fig.frames:
-            st.warning("No frames detected — injecting fallback animation")
+            st.warning("No frames detected — injecting smooth orbit")
             theta = np.linspace(0, 2*np.pi, 100)
             x = np.cos(theta * 5)
             y = np.sin(theta * 5)
             z = np.zeros_like(theta)
-            frames = [go.Frame(data=[go.Scatter3d(x=[x[i]], y=[y[i]], z=[z[i]], mode='markers', marker=dict(color='red', size=10))], name=str(i)) for i in range(100)]
+            frames = [go.Frame(data=[go.Scatter3d(x=[x[i]], y=[y[i]], z=[z[i]], mode='markers', marker=dict(color='red', size=12))], name=str(i)) for i in range(100)]
             fig.frames = frames
 
         # --- SPEED CONTROL ---
@@ -203,8 +218,9 @@ if "generated_code" in st.session_state:
                     if isinstance(btn.args[1], dict):
                         btn.args[1]["frame"]["duration"] = frame_ms
 
-        # --- CLEAN LAYOUT ---
+        # --- REMOVE PLOTLY BUTTONS ---
         fig.update_layout(
+            updatemenus=[],
             height=800,
             margin=dict(l=0, r=0, t=60, b=0),
             title="AI-Generated Physics Simulation",
@@ -212,12 +228,35 @@ if "generated_code" in st.session_state:
             scene=dict(aspectmode='data')
         )
 
-        # --- RENDER (NATIVE PLOTLY BUTTONS) ---
+        # --- RENDER ---
         st.plotly_chart(
             fig,
             use_container_width=True,
-            config={"displaylogo": False, "scrollZoom": True}
+            config={"displaylogo": False, "scrollZoom": True},
+            key=f"plot_{hash(user_input)}_{st.session_state.animating}"
         )
+
+        # --- AUTO-PLAY VIA JS ---
+        if st.session_state.animating:
+            st.components.v1.html(
+                f"""
+                <script>
+                const plot = document.querySelector('.js-plotly-plot');
+                if (plot && !{st.session_state.get('played', False)}) {{
+                    setTimeout(() => {{
+                        Plotly.animate(plot, null, {{
+                            frame: {{duration: {frame_ms}, redraw: true}},
+                            transition: {{duration: 0}},
+                            fromcurrent: true
+                        }});
+                        parent.st.session_state.played = true;
+                    }}, 500);
+                }}
+                </script>
+                """,
+                height=0
+            )
+            st.session_state.played = True
 
     except Exception as e:
         st.error(f"Render failed: {e}")
