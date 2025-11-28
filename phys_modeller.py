@@ -170,20 +170,15 @@ def main_app():
 
     with col2:
         # --- Status Placeholder ---
-        # This creates a dedicated area for "Working..." messages
         status_placeholder = st.empty()
 
         if "generated_code" not in st.session_state:
             st.session_state["generated_code"] = None
 
         if generate_btn:
-            # Clear previous chart while working
             st.session_state["generated_code"] = None 
-            
             with status_placeholder.container():
                 st.info(f"⚛️ Initializing Physics Engine ({model_name})... Please wait.")
-                # We don't use st.spinner here so we can control the UI layout better
-                
                 final_code, error, in_txt, out_txt = generate_with_retry(user_instruction, api_key, base_url, model_name)
                 
                 if final_code:
@@ -194,9 +189,8 @@ def main_app():
                 else:
                     st.error(f"Generation failed: {error}")
 
-        # If we have code, clear the loading placeholder and show the result
         if st.session_state["generated_code"]:
-            status_placeholder.empty() # Remove the "Working..." message
+            status_placeholder.empty() 
 
             d_col1, d_col2 = st.columns([1, 3])
             with d_col1:
@@ -213,7 +207,6 @@ def main_app():
                     fig = exec_globals["fig"]
                     
                     # --- CAMERA LOCK ---
-                    # "uirevision" is the key to keeping the zoom while playing
                     fig.update_layout(uirevision="Don't Reset", scene=dict(uirevision="Don't Reset"))
 
                     # --- ROBUST UI FIXES ---
@@ -249,18 +242,17 @@ def main_app():
                                     arg_dict['frame']['redraw'] = True 
                                     arg_dict['fromcurrent'] = True
 
-                    # --- RENDER WITH MODEBAR ---
-                    # config={'displayModeBar': True} ensures the toolbar is visible.
-                    # 'scrollZoom': True allows mouse wheel zooming.
+                    # --- RENDER WITH LARGER HEIGHT ---
+                    # Height 850px makes it large enough that zooming is rarely needed.
                     st.plotly_chart(
                         fig, 
                         use_container_width=True, 
+                        height=850, 
                         key=f"sim_chart_{speed_factor}",
                         config={
                             'displayModeBar': True, 
                             'scrollZoom': True,
                             'displaylogo': False,
-                            # Force 3D Zoom buttons to appear
                             'modeBarButtonsToAdd': ['zoomIn3d', 'zoomOut3d']
                         }
                     )
