@@ -211,7 +211,7 @@ if "generated_code" in st.session_state:
             play_pause = fig.layout.updatemenus[0].to_plotly_json()
             play_pause.update({
                 "y": 1.15, "x": 0.0, "xanchor": "left", "yanchor": "top",
-                "bgcolor": "rgba(255,255,255,0.9)", "bordercolor": "#333", "borderwidth": 1
+                "bgcolor": "rgba(30,30,30,0.95)", "font": {"color": "white"} "bordercolor": "#333", "borderwidth": 1
             })
             fig.update_layout(updatemenus=[play_pause])
 
@@ -232,4 +232,5 @@ if "generated_code" in st.session_state:
     except Exception as e:
         st.error(f"Render failed: {e}")
         st.code(code, language="python")
+
 
