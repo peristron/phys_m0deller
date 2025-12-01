@@ -13,10 +13,10 @@ st.set_page_config(layout="wide", page_title="GenAI Physics Modeler")
 # --- Constants ---
 PRICING = {
     "gpt-4o": {"input": 2.50, "output": 10.00},
-    "grok-beta": {"input": 5.00, "output": 15.00}
+    "grok-2-1212": {"input": 2.00, "output": 10.00} # Approximate pricing for Grok 2
 }
 
-# --- Pre-Defined Scenarios (Bridge between Hard-coded & Generative) ---
+# --- Pre-Defined Scenarios ---
 SCENARIOS = {
     "Custom": "",
     "Rotating Sphere with Gas (Basic)": "A wireframe sphere rotating on the Z-axis with 20 gas molecules bouncing around it inside a cubic container.",
@@ -80,7 +80,8 @@ def main_app():
             api_key = get_secret("xai_api_key")
             if api_key: 
                 base_url = "https://api.x.ai/v1"
-                model_name = "grok-beta"
+                # UPDATED: Using the stable Grok 2 model
+                model_name = "grok-2-1212"
             else: st.error("Missing 'xai_api_key'")
 
         st.divider()
@@ -117,6 +118,7 @@ def main_app():
     def estimate_cost(input_text, output_text, model):
         in_tok = len(input_text) / 4
         out_tok = len(output_text) / 4
+        # Fallback pricing if model not found in map
         rates = PRICING.get(model, {"input": 2.50, "output": 10.00})
         return (in_tok/1e6)*rates["input"], (out_tok/1e6)*rates["output"], in_tok, out_tok
 
@@ -244,13 +246,13 @@ def main_app():
             if "fig" in exec_globals:
                 fig = exec_globals["fig"]
                 
-                # --- LAYOUT POLISH (Inspired by notes) ---
+                # --- LAYOUT POLISH ---
                 fig.update_layout(
                     height=850,
                     margin=dict(l=0, r=0, t=0, b=0),
                     uirevision="Don't Reset",
                     scene=dict(uirevision="Don't Reset"),
-                    autosize=True # Responsive
+                    autosize=True 
                 )
 
                 # --- ROBUST UI FIXES ---
@@ -294,8 +296,8 @@ def main_app():
                     config={
                         'displayModeBar': True, 
                         'scrollZoom': True,
-                        'displaylogo': False, # Cleaner look
-                        'modeBarButtonsToRemove': ['lasso2d', 'select2d'], # Cleanup
+                        'displaylogo': False, 
+                        'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
                         'modeBarButtonsToAdd': ['zoomIn3d', 'zoomOut3d']
                     }
                 )
