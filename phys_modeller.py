@@ -4,240 +4,307 @@ import streamlit as st
 import openai
 import numpy as np
 import plotly.graph_objects as go
-import hashlib
 import re
+import time
 
-st.set_page_config(page_title="GenAI Physics Modeler", page_icon="atom", layout="wide")
+# --- Page Configuration ---
+st.set_page_config(layout="wide", page_title="GenAI Physics Modeler")
 
-# --- PRICING ---
+# --- Constants ---
 PRICING = {
-    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
     "gpt-4o": {"input": 2.50, "output": 10.00},
-    "grok-4-1-fast-reasoning": {"input": 2.00, "output": 6.00},
+    "grok-beta": {"input": 5.00, "output": 15.00}
 }
 
-# --- SECRETS ---
-def get_key(name):
-    return st.secrets.get(name) or st.secrets.get(name.upper()) or st.secrets.get(name.lower())
+# --- Pre-Defined Scenarios (Bridge between Hard-coded & Generative) ---
+SCENARIOS = {
+    "Custom": "",
+    "Rotating Sphere with Gas (Basic)": "A wireframe sphere rotating on the Z-axis with 20 gas molecules bouncing around it inside a cubic container.",
+    "Rarefied Gas Spin-Up (Advanced)": "Simulate the transfer of conserved momentum from a rotating solid disk to gas molecules immediately adjacent to it in a vacuum. The gas should gradually spin up due to wall collisions. Use free molecular flow physics.",
+    "Solar System with Comet": "A solar system simulation with a static yellow sun, 3 orbiting planets at different distances/speeds, and a comet passing through on a hyperbolic trajectory.",
+    "Damped Pendulum Phase Space": "A 3D visualization of a simple pendulum with damping. Show the pendulum bob swinging in 3D space and trace its path color-coded by velocity.",
+}
 
-# --- AUTH ---
+# --- Helper: Safe Secret Retrieval ---
+def get_secret(key_name):
+    if key_name in st.secrets: return st.secrets[key_name]
+    if key_name.upper() in st.secrets: return st.secrets[key_name.upper()]
+    if key_name.lower() in st.secrets: return st.secrets[key_name.lower()]
+    return None
+
+# --- Authentication Logic ---
 def check_password():
-    pwd = get_key("app_password")
-    if not pwd:
-        st.error("Missing `app_password` in secrets")
-        st.stop()
-    def submit():
-        st.session_state.auth = st.session_state.pwd == pwd
-    if "auth" not in st.session_state:
-        st.text_input("Password", type="password", key="pwd", on_change=submit)
-        st.stop()
-    if not st.session_state.auth:
-        st.text_input("Password", type="password", key="pwd", on_change=submit)
-        st.error("Wrong password")
+    stored_password = get_secret("app_password")
+    if not stored_password:
+        st.error("❌ Configuration Error: 'app_password' not found in Secrets.")
         st.stop()
 
-check_password()
+    def password_entered():
+        if st.session_state["password"] == stored_password:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]
+        else:
+            st.session_state["password_correct"] = False
 
-# --- CACHING ---
-@st.cache_data(show_spinner=False)
-def get_cached_code(prompt_hash):
-    return st.session_state.get(f"cache_{prompt_hash}")
+    if "password_correct" not in st.session_state:
+        st.text_input("Enter App Password", type="password", on_change=password_entered, key="password")
+        return False
+    elif not st.session_state["password_correct"]:
+        st.text_input("Enter App Password", type="password", on_change=password_entered, key="password")
+        st.error("😕 Password incorrect")
+        return False
+    else:
+        return True
 
-def set_cached_code(prompt_hash, code):
-    st.session_state[f"cache_{prompt_hash}"] = code
-
-# --- SYSTEM PROMPT ---
-SYSTEM_PROMPT = """
-You are an expert Python physics animator using Plotly.
-
-MANDATORY RULES — FOLLOW EXACTLY:
-1. Use only: numpy as np, plotly.graph_objects as go
-2. Generate EXACTLY 100 precomputed frames using a list called `frames`
-3. Define `frames = [go.Frame(data=..., name=str(i)) for i in range(100)]`
-4. Create the figure with BOTH data and frames:  
-   fig = go.Figure(data=initial_data, frames=frames)
-5. Add Play/Pause buttons using updatemenus
-6. Use smooth, continuous motion (rotation, orbit, etc.)
-7. All arrays must be float64
-8. Output ONLY raw, valid Python code — no markdown, no explanation
-"""
-
-# --- SIDEBAR ---
-with st.sidebar:
-    st.title("Settings")
-    provider = st.radio("Model", ["OpenAI (gpt-4o-mini)", "OpenAI (gpt-4o)", "xAI Grok-4.1"])
+# --- Core Application ---
+def main_app():
     
-    if "gpt-4o-mini" in provider:
-        model = "gpt-4o-mini"
-        key = get_key("openai_api_key")
+    # --- SIDEBAR: All Controls ---
+    with st.sidebar:
+        st.title("⚙️ Settings")
+        
+        # 1. Provider Config
+        st.subheader("AI Provider")
+        provider = st.radio("Select Model", ["OpenAI", "xAI (Grok)"])
+        
+        api_key = None
         base_url = None
-    elif "gpt-4o" in provider:
-        model = "gpt-4o"
-        key = get_key("openai_api_key")
-        base_url = None
-    else:
-        model = "grok-4-1-fast-reasoning"
-        key = get_key("xai_api_key")
-        base_url = "https://api.x.ai/v1"
+        model_name = ""
+        
+        if provider == "OpenAI":
+            api_key = get_secret("openai_api_key")
+            if api_key: model_name = "gpt-4o" 
+            else: st.error("Missing 'openai_api_key'")
+                
+        elif provider == "xAI (Grok)":
+            api_key = get_secret("xai_api_key")
+            if api_key: 
+                base_url = "https://api.x.ai/v1"
+                model_name = "grok-beta"
+            else: st.error("Missing 'xai_api_key'")
 
-    if not key:
-        st.error("Missing API key")
-        st.stop()
+        st.divider()
 
-    speed = st.slider("Animation Speed", 1, 100, 40, help="Higher = faster")
-    frame_ms = max(10, 1000 // speed)
+        # 2. Animation Controls
+        st.subheader("🎮 Animation Speed")
+        speed_factor = st.slider("Speed", min_value=1, max_value=100, value=50, label_visibility="collapsed")
+        frame_duration = int(1000 / speed_factor)
+        st.caption(f"Frame Delay: {frame_duration}ms")
 
-    st.divider()
-    st.subheader("Live Cost")
-    if "last_cost" in st.session_state:
-        st.metric("Total Cost", f"${st.session_state.last_cost:.4f}")
-        st.caption(f"Using {model}")
-    else:
-        st.info("Cost appears after first generation")
+        st.divider()
+        
+        # 3. Cost Estimate
+        with st.expander("💰 Cost Estimate", expanded=False):
+            if "last_cost_data" in st.session_state:
+                c_in, c_out, t_in, t_out = st.session_state["last_cost_data"]
+                st.caption(f"Last Run ({model_name})")
+                st.write(f"**Input:** ${c_in:.4f}")
+                st.write(f"**Output:** ${c_out:.4f}")
+                st.markdown(f"### Total: ${c_in+c_out:.4f}")
+            else:
+                st.info("Run a simulation to see costs.")
 
-st.title("Generative Physics Modeler")
-st.caption("Describe a physics scene → get a real-time 3D animation")
+    # --- MAIN PAGE ---
+    st.title("⚛️ Generative Physics Modeler")
 
-user_input = st.text_area(
-    "Describe the physics scene",
-    height=120,
-    placeholder="e.g., A red sphere orbiting a glowing yellow sun with 12 moons in elliptical paths",
-    value="A red cube orbiting a glowing, large fuschia sun with 99 moons in elliptical paths, all inside a rotating wireframe dodecahedron"
-)
+    # --- Helpers ---
+    def clean_code(code):
+        code = re.sub(r'^```python', '', code)
+        code = re.sub(r'^```', '', code)
+        code = re.sub(r'```$', '', code)
+        return code.strip()
 
-if st.button("Generate Animation", type="primary"):
-    prompt_hash = hashlib.md5(user_input.encode()).hexdigest()
-    cached = get_cached_code(prompt_hash)
-    if cached:
-        st.success("Loaded from cache!")
-        st.session_state.generated_code = cached
-        st.session_state.last_cost = 0.0
-    else:
-        with st.status(f"Generating with {model}...", expanded=True) as status:
-            st.write("Sending to AI...")
-            client = openai.OpenAI(api_key=key, base_url=base_url)
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_input}
-            ]
+    def estimate_cost(input_text, output_text, model):
+        in_tok = len(input_text) / 4
+        out_tok = len(output_text) / 4
+        rates = PRICING.get(model, {"input": 2.50, "output": 10.00})
+        return (in_tok/1e6)*rates["input"], (out_tok/1e6)*rates["output"], in_tok, out_tok
 
-            total_input = len(user_input)
-            total_output = 0
+    def get_system_prompt():
+        return """
+        You are a Python Code Generator for a 3D Physics Visualization.
+        
+        GOAL: Convert description to a Python script using `numpy` and `plotly.graph_objects`.
+        
+        STRICT CONSTRAINTS:
+        1. Libraries: `numpy` (as np), `plotly.graph_objects` (as go), `streamlit` (as st).
+        2. NO infinite loops. Pre-calculate 90 frames of data.
+        3. **CRITICAL:** Define a figure variable named `fig`. 
+        4. **CRITICAL:** Do NOT call `st.plotly_chart` or `fig.show()`. The host app will render `fig`.
+        5. In `fig.layout.updatemenus`, set type='buttons' with 'Play' and 'Pause' buttons.
+        6. Ensure the simulation uses linear, continuous motion (e.g. full rotation).
+        7. **IMPORTANT:** When defining frames, ensure you update the specific data of the traces.
+        8. **PHYSICS:** If simulating gas in vacuum, consider free molecular flow and momentum transfer via collisions.
+        9. Output RAW CODE only (no markdown blocks).
+        10. Initialize all arrays as floats.
+        """
 
-            for attempt in range(4):
-                try:
-                    response = client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        temperature=0.2 if attempt > 1 else 0.3,
-                        max_tokens=4000
+    def call_llm(messages, key, url, model):
+        client = openai.OpenAI(api_key=key, base_url=url)
+        response = client.chat.completions.create(model=model, messages=messages, temperature=0.5)
+        return response.choices[0].message.content
+
+    def generate_with_retry(prompt, key, url, model, max_retries=2):
+        system_prompt = get_system_prompt()
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+        
+        raw_code = call_llm(messages, key, url, model)
+        code = clean_code(raw_code)
+        
+        t_in = system_prompt + prompt
+        t_out = raw_code
+        
+        for attempt in range(max_retries + 1):
+            try:
+                test_globals = {"st": st, "np": np, "go": go, "__name__": "__main__"}
+                exec(code, test_globals)
+                if "fig" not in test_globals: raise ValueError("No 'fig' defined.")
+                return code, None, t_in, t_out
+            except Exception as e:
+                if attempt < max_retries:
+                    err_prompt = f"Runtime Error: {str(e)}. Fix code/matrix shapes and return ONLY valid Python."
+                    messages.append({"role": "assistant", "content": code})
+                    messages.append({"role": "user", "content": err_prompt})
+                    raw_code = call_llm(messages, key, url, model)
+                    code = clean_code(raw_code)
+                    t_in += err_prompt; t_out += raw_code
+                else:
+                    return None, str(e), t_in, t_out
+
+    # --- Input Section ---
+    with st.container():
+        # Scenario Selector
+        col_sel, col_dummy = st.columns([3, 2])
+        with col_sel:
+            selected_scenario = st.selectbox("📚 Load Example Scenario", list(SCENARIOS.keys()))
+        
+        # Text Input & Button
+        col_input, col_btn = st.columns([4, 1])
+        with col_input:
+            # Determine default text
+            default_text = SCENARIOS[selected_scenario] if selected_scenario != "Custom" else ""
+            
+            # We use session state to handle text area updates from selectbox
+            if "prompt_text" not in st.session_state: st.session_state.prompt_text = SCENARIOS["Rotating Sphere with Gas (Basic)"]
+            if selected_scenario != "Custom": st.session_state.prompt_text = default_text
+            
+            user_instruction = st.text_area(
+                "Physics Description", 
+                height=100, 
+                value=st.session_state.prompt_text,
+                placeholder="Describe the simulation..."
+            )
+            
+        with col_btn:
+            st.write("") # Spacing
+            st.write("") # Spacing
+            if api_key:
+                generate_btn = st.button("🚀 Generate", type="primary", use_container_width=True)
+            else:
+                st.warning("Key Missing")
+                generate_btn = False
+
+    if "generated_code" not in st.session_state:
+        st.session_state["generated_code"] = None
+
+    if generate_btn:
+        st.session_state["generated_code"] = None 
+        
+        # --- STATUS INDICATOR ---
+        with st.status(f"⚛️ Simulating with {model_name}...", expanded=True) as status:
+            st.write("Calculating Physics Vectors...")
+            final_code, error, in_txt, out_txt = generate_with_retry(user_instruction, api_key, base_url, model_name)
+            
+            if final_code:
+                st.write("Compiling Python...")
+                st.session_state["generated_code"] = final_code
+                c_in, c_out, t_in, t_out = estimate_cost(in_txt, out_txt, model_name)
+                st.session_state["last_cost_data"] = (c_in, c_out, t_in, t_out)
+                status.update(label="Simulation Ready!", state="complete", expanded=False)
+                st.rerun()
+            else:
+                status.update(label="Generation Failed", state="error")
+                st.error(f"Error: {error}")
+
+    if st.session_state["generated_code"]:
+
+        # --- Download / Code View ---
+        with st.expander("View Source Code & Download"):
+            c1, c2 = st.columns([1, 5])
+            with c1:
+                st.download_button("📥 Download .py", st.session_state["generated_code"], "simulation.py", "text/x-python")
+            with c2:
+                st.code(st.session_state["generated_code"], language='python')
+
+        # --- Render Simulation ---
+        try:
+            exec_globals = {"st": st, "np": np, "go": go, "__name__": "__main__"}
+            exec(st.session_state["generated_code"], exec_globals)
+            
+            if "fig" in exec_globals:
+                fig = exec_globals["fig"]
+                
+                # --- LAYOUT POLISH (Inspired by notes) ---
+                fig.update_layout(
+                    height=850,
+                    margin=dict(l=0, r=0, t=0, b=0),
+                    uirevision="Don't Reset",
+                    scene=dict(uirevision="Don't Reset"),
+                    autosize=True # Responsive
+                )
+
+                # --- ROBUST UI FIXES ---
+                if fig.layout.updatemenus:
+                    # TOP LEFT BUTTONS
+                    fig.update_layout(
+                        updatemenus=[
+                            dict(
+                                type="buttons",
+                                direction="left",
+                                x=0.0, y=1.0, 
+                                xanchor="left", yanchor="top",
+                                showactive=True,
+                                bgcolor="white",
+                                bordercolor="#333",
+                                borderwidth=1,
+                                font=dict(color="black", size=12),
+                                pad={"r": 10, "t": 10},
+                                buttons=fig.layout.updatemenus[0].buttons
+                            )
+                        ]
                     )
-                    raw_code = response.choices[0].message.content.strip()
-                    code = re.sub(r"^```python|^```|```$", "", raw_code, flags=re.MULTILINE).strip()
 
-                    if not code or len(code) < 50:
-                        raise ValueError("Empty or too short code")
+                    # SPEED CONTROL
+                    for button in fig.layout.updatemenus[0].buttons:
+                        if button.label == 'Play':
+                            if hasattr(button, 'args') and len(button.args) > 1:
+                                arg_dict = button.args[1]
+                                if 'frame' not in arg_dict: arg_dict['frame'] = {}
+                                if 'transition' not in arg_dict: arg_dict['transition'] = {}
+                                
+                                arg_dict['frame']['duration'] = frame_duration
+                                arg_dict['transition']['duration'] = 0
 
-                    test_env = {"np": np, "go": go}
-                    exec(code, test_env)
-                    if "fig" not in test_env:
-                        raise ValueError("No 'fig' variable defined")
+                # --- RENDER WITH CLEAN CONFIG ---
+                st.plotly_chart(
+                    fig, 
+                    use_container_width=True, 
+                    height=850, 
+                    key=f"sim_chart_{speed_factor}",
+                    config={
+                        'displayModeBar': True, 
+                        'scrollZoom': True,
+                        'displaylogo': False, # Cleaner look
+                        'modeBarButtonsToRemove': ['lasso2d', 'select2d'], # Cleanup
+                        'modeBarButtonsToAdd': ['zoomIn3d', 'zoomOut3d']
+                    }
+                )
+                
+            else:
+                st.error("Code executed but `fig` variable was not defined.")
+        except Exception as e:
+            st.error(f"Runtime Error: {e}")
 
-                    final_code = code
-                    set_cached_code(prompt_hash, code)
-                    total_output += len(raw_code)
-                    status.update(label="Success!", state="complete")
-                    break
-
-                except Exception as e:
-                    error_msg = str(e)
-                    if attempt < 3:
-                        st.warning(f"Attempt {attempt + 1} failed → retrying...")
-                        messages.append({"role": "assistant", "content": raw_code if 'raw_code' in locals() else ""})
-                        messages.append({"role": "user", "content": 
-                            f"CRITICAL ERROR:\n{error_msg}\n\n"
-                            "Fix the code and return ONLY valid, runnable Python. No markdown. No explanation."
-                        })
-                        total_output += len(raw_code or "")
-                    else:
-                        st.error(f"Failed after 4 attempts. Last error: {error_msg}")
-                        st.code(raw_code, language="python")
-                        st.stop()
-
-            in_cost = (total_input / 1_000_000) * PRICING[model]["input"]
-            out_cost = (total_output / 1_000_000) * PRICING[model]["output"]
-            st.session_state.last_cost = in_cost + out_cost
-
-        st.session_state.generated_code = final_code
-
-# === FINAL RENDERING: INFINITE LOOP + NO STATUS GLITCH ===
-if "generated_code" in st.session_state:
-    code = st.session_state.generated_code
-
-    with st.expander("View & Download Code"):
-        c1, c2 = st.columns([1, 4])
-        with c1:
-            st.download_button("Download .py", code, "physics_sim.py")
-        with c2:
-            st.code(code, language="python")
-
-    try:
-        env = {"np": np, "go": go, "st": st}
-        exec(code, env)
-        fig = env["fig"]
-
-        # --- GUARANTEE FRAMES ---
-        if not hasattr(fig, "frames") or not fig.frames:
-            theta = np.linspace(0, 2*np.pi, 100)
-            x = np.cos(theta * 5)
-            y = np.sin(theta * 5)
-            z = np.zeros_like(theta)
-            frames = [go.Frame(data=[go.Scatter3d(x=[x[i]], y=[y[i]], z=[z[i]], mode='markers', marker=dict(color='red', size=12))], name=str(i)) for i in range(100)]
-            fig.frames = frames
-
-        # --- INFINITE LOOP — THIS IS THE FINAL FIX ---
-        if fig.layout.updatemenus:
-            for btn in fig.layout.updatemenus[0].buttons:
-                if btn.label == "Play":
-                    btn.args = [
-                        None,
-                        {
-                            "frame": {"duration": frame_ms, "redraw": True},
-                            "fromcurrent": True,
-                            "transition": {"duration": 0},
-                            "mode": "immediate",
-                            "repeat": True   # ← THIS LINE MAKES IT LOOP FOREVER
-                        }
-                    ]
-
-        # --- BUTTONS ABOVE CHART ---
-        if fig.layout.updatemenus:
-            play_pause = fig.layout.updatemenus[0].to_plotly_json()
-            play_pause.update({
-                "y": 1.15, "x": 0.0, "xanchor": "left", "yanchor": "top",
-                "bgcolor": "rgba(30,30,30,0.95)",
-                "bordercolor": "#00cc99",
-                "borderwidth": 2,
-                "font": {"color": "white", "size": 13}
-            })
-            fig.update_layout(updatemenus=[play_pause])
-
-        fig.update_layout(
-            height=800,
-            margin=dict(l=0, r=0, t=60, b=0),
-            title="AI-Generated Physics Simulation",
-            title_x=0.5,
-            scene=dict(aspectmode='data')
-        )
-
-        # --- NO st.rerun() HERE — IT KILLS ANIMATION ---
-        st.plotly_chart(
-            fig,
-            use_container_width=True,
-            config={"displaylogo": False, "scrollZoom": True}
-        )
-
-    except Exception as e:
-        st.error(f"Render failed: {e}")
-        st.code(code, language="python")
-
+if __name__ == "__main__":
+    if check_password():
+        main_app()
