@@ -11,9 +11,17 @@ import types
 st.set_page_config(layout="wide", page_title="GenAI Physics Modeler", page_icon="⚛️")
 
 # --- Constants ---
+# Updated exact pricing from xAI Docs (Nov 2025 data)
 PRICING = {
+    # OpenAI
     "gpt-4o": {"input": 2.50, "output": 10.00},
-    "grok-2-1212": {"input": 2.00, "output": 10.00}
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    
+    # xAI (Exact values from your screenshot)
+    "grok-2-1212":           {"input": 2.00, "output": 10.00}, # Standard v2
+    "grok-4-0709":           {"input": 3.00, "output": 15.00}, # Standard v4
+    "grok-4-1-fast-reasoning": {"input": 0.20, "output": 0.50},  # Ultra-efficient
+    "grok-3":                {"input": 3.00, "output": 15.00}, 
 }
 
 SCENARIOS = {
@@ -83,13 +91,13 @@ def clean_code(code):
     return code.strip()
 
 def estimate_cost(input_text, output_text, model):
-    rates = PRICING.get(model, {"input": 2.50, "output": 10.00})
+    # Default to expensive fallback if model mismatch to warn user
+    rates = PRICING.get(model, {"input": 3.00, "output": 15.00}) 
     in_tok = len(input_text) / 4
     out_tok = len(output_text) / 4
     return (in_tok/1e6)*rates["input"], (out_tok/1e6)*rates["output"]
 
 def get_system_prompt():
-    # UPDATED PROMPT: Explicitly tells AI NOT to worry about buttons
     return """
     You are a Python Code Generator for a 3D Physics Visualization using `numpy` and `plotly.graph_objects`.
     
@@ -110,6 +118,8 @@ def get_system_prompt():
 
 def call_llm(messages, key, url, model):
     client = openai.OpenAI(api_key=key, base_url=url)
+    # Note: We do not use 'frequency_penalty' or 'presence_penalty' 
+    # as these are not supported by Grok 4 reasoning models per documentation.
     response = client.chat.completions.create(model=model, messages=messages, temperature=0.5)
     return response.choices[0].message.content
 
@@ -142,18 +152,33 @@ def main_app():
     
     with st.sidebar:
         st.title("⚙️ Settings")
+        
+        # --- Provider Selection with Version Control ---
         st.subheader("AI Provider")
-        provider = st.radio("Model Source", ["OpenAI", "xAI (Grok)"], label_visibility="collapsed")
+        provider = st.radio("Model Source", ["xAI (Grok)", "OpenAI"], label_visibility="collapsed")
         
         api_key = None
         base_url = None
-        if provider == "OpenAI":
-            api_key = get_secret("openai_api_key")
-            model_name = "gpt-4o"
-        else:
+        model_name = ""
+        
+        if provider == "xAI (Grok)":
             api_key = get_secret("xai_api_key")
             base_url = "https://api.x.ai/v1"
-            model_name = "grok-2-1212"
+            
+            # UPDATED MODEL SELECTOR based on Table Data
+            model_options = {
+                "Grok 4.1 Fast (Reasoning) [Best Value]": "grok-4-1-fast-reasoning",
+                "Grok 4 (Standard)": "grok-4-0709",
+                "Grok 2 (Legacy)": "grok-2-1212",
+                "Grok 3 (Legacy)": "grok-3"
+            }
+            
+            choice = st.selectbox("Version", list(model_options.keys()))
+            model_name = model_options[choice]
+            
+        else: # OpenAI
+            api_key = get_secret("openai_api_key")
+            model_name = st.selectbox("Version", ["gpt-4o", "gpt-4o-mini"])
             
         if not api_key: st.error(f"Missing API Key for {provider}")
         st.divider()
@@ -185,10 +210,9 @@ def main_app():
         st.session_state.prompt_text = user_prompt
 
         if st.button("🚀 Generate Simulation", type="primary", use_container_width=True, disabled=not api_key):
-            with st.status("Calculating Physics...", expanded=True) as status:
+            with st.status(f"Simulating with {model_name}...", expanded=True) as status:
                 try:
                     st.write("🧠 Thinking...")
-                    # Removed frame_dur from generation call, we handle it in post-processing now
                     final_code, in_txt, out_txt = generate_simulation(user_prompt, api_key, base_url, model_name)
                     
                     st.write("✍️ Compiling...")
@@ -225,9 +249,7 @@ def main_app():
         if success and "fig" in exec_globals:
             fig = exec_globals["fig"]
             
-            # --- KEY FIX: INJECT WORKING BUTTONS ---
-            # We ignore whatever buttons the AI tried to make and inject our own
-            # that are strictly tied to the 'frame_dur' variable from the slider.
+            # --- Inject Working Play Buttons Programmatically ---
             fig.update_layout(
                 updatemenus=[dict(
                     type="buttons",
