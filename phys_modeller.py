@@ -11,16 +11,12 @@ import types
 st.set_page_config(layout="wide", page_title="GenAI Physics Modeler", page_icon="⚛️")
 
 # --- Constants ---
-# Updated exact pricing from xAI Docs (Nov 2025 data)
 PRICING = {
-    # OpenAI
     "gpt-4o": {"input": 2.50, "output": 10.00},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    
-    # xAI (Exact values from your screenshot)
-    "grok-2-1212":           {"input": 2.00, "output": 10.00}, # Standard v2
-    "grok-4-0709":           {"input": 3.00, "output": 15.00}, # Standard v4
-    "grok-4-1-fast-reasoning": {"input": 0.20, "output": 0.50},  # Ultra-efficient
+    "grok-2-1212":           {"input": 2.00, "output": 10.00},
+    "grok-4-0709":           {"input": 3.00, "output": 15.00},
+    "grok-4-1-fast-reasoning": {"input": 0.20, "output": 0.50},
     "grok-3":                {"input": 3.00, "output": 15.00}, 
 }
 
@@ -33,17 +29,16 @@ SCENARIOS = {
     "Lorenz Attractor": "Simulate the Lorenz attractor (chaotic system). Visualize the trajectory of a point over time in 3D space, leaving a trail.",
 }
 
-# --- Session State Initialization ---
+# --- Session State ---
 if "history" not in st.session_state: st.session_state.history = [] 
 if "prompt_text" not in st.session_state: st.session_state.prompt_text = SCENARIOS["Rotating Sphere with Gas"]
 
-# --- Helper: Safe Secret Retrieval ---
+# --- Helpers ---
 def get_secret(key_name):
     for key in [key_name, key_name.upper(), key_name.lower()]:
         if key in st.secrets: return st.secrets[key]
     return None
 
-# --- Authentication ---
 def check_password():
     stored_password = get_secret("app_password")
     if not stored_password:
@@ -66,7 +61,7 @@ def check_password():
         return False
     return True
 
-# --- Logic: Sandbox Execution ---
+# --- Sandbox Execution ---
 def execute_safe_code(code_str, global_vars):
     def restricted_import(name, globals=None, locals=None, fromlist=(), level=0):
         if name in ['os', 'sys', 'subprocess', 'shutil', 'requests']:
@@ -83,7 +78,7 @@ def execute_safe_code(code_str, global_vars):
     except Exception as e:
         return False, str(e)
 
-# --- Logic: LLM Generation ---
+# --- LLM Logic ---
 def clean_code(code):
     code = re.sub(r'^```python', '', code)
     code = re.sub(r'^```', '', code)
@@ -91,7 +86,6 @@ def clean_code(code):
     return code.strip()
 
 def estimate_cost(input_text, output_text, model):
-    # Default to expensive fallback if model mismatch to warn user
     rates = PRICING.get(model, {"input": 3.00, "output": 15.00}) 
     in_tok = len(input_text) / 4
     out_tok = len(output_text) / 4
@@ -109,18 +103,24 @@ def get_system_prompt():
        - Pre-calculate exactly 60-90 frames.
        - Use `go.Frame` objects attached to `fig.frames`.
        - **DO NOT define `updatemenus` (Play buttons).** The host app will add these automatically.
-    5. **Physics:** Initialize positions as floats.
+    
+    CRITICAL EFFICIENCY RULES (To prevent cutoff errors):
+    1. **VECTORIZATION:** Use `numpy` (e.g., `np.linspace`, `np.sin`) to generate data.
+    2. **NO HARDCODING:** Do NOT write out large lists of numbers manually (e.g. `[0.1, 0.2, ...]`). This is forbidden.
+    3. **Conciseness:** Keep the code compact.
     
     CRITICAL VISUALIZATION RULES:
-    1. **FIXED AXIS RANGES:** You MUST set `layout.scene.xaxis.range` (and y/z) to fixed hardcoded values (e.g., [-10, 10]) covering the bounds. Do NOT use auto-scaling.
-    2. **Camera:** Set a reasonable default camera eye.
+    1. **FIXED AXIS RANGES:** You MUST set `layout.scene.xaxis.range` to fixed hardcoded values (e.g. [-10, 10]). Do NOT use auto-scaling.
     """
 
 def call_llm(messages, key, url, model):
     client = openai.OpenAI(api_key=key, base_url=url)
-    # Note: We do not use 'frequency_penalty' or 'presence_penalty' 
-    # as these are not supported by Grok 4 reasoning models per documentation.
-    response = client.chat.completions.create(model=model, messages=messages, temperature=0.5)
+    response = client.chat.completions.create(
+        model=model, 
+        messages=messages, 
+        temperature=0.5,
+        max_tokens=4096 # INCREASED: Ensures code is not truncated
+    )
     return response.choices[0].message.content
 
 def generate_simulation(prompt, key, url, model):
@@ -134,7 +134,8 @@ def generate_simulation(prompt, key, url, model):
     success, error = execute_safe_code(code, dummy_globals)
     
     if not success:
-        err_msg = f"The code raised this error: {error}. Please fix the code and return ONLY valid Python."
+        # Retry with explicit instruction to finish the code
+        err_msg = f"Runtime Error: {error}. The code might have been cut off. Please regenerate the **COMPLETE** valid Python script."
         messages.append({"role": "assistant", "content": code})
         messages.append({"role": "user", "content": err_msg})
         raw_code = call_llm(messages, key, url, model)
@@ -153,7 +154,7 @@ def main_app():
     with st.sidebar:
         st.title("⚙️ Settings")
         
-        # --- Provider Selection with Version Control ---
+        # --- Provider ---
         st.subheader("AI Provider")
         provider = st.radio("Model Source", ["xAI (Grok)", "OpenAI"], label_visibility="collapsed")
         
@@ -164,33 +165,40 @@ def main_app():
         if provider == "xAI (Grok)":
             api_key = get_secret("xai_api_key")
             base_url = "https://api.x.ai/v1"
-            
-            # UPDATED MODEL SELECTOR based on Table Data
             model_options = {
                 "Grok 4.1 Fast (Reasoning) [Best Value]": "grok-4-1-fast-reasoning",
                 "Grok 4 (Standard)": "grok-4-0709",
                 "Grok 2 (Legacy)": "grok-2-1212",
                 "Grok 3 (Legacy)": "grok-3"
             }
-            
             choice = st.selectbox("Version", list(model_options.keys()))
             model_name = model_options[choice]
-            
-        else: # OpenAI
+        else: 
             api_key = get_secret("openai_api_key")
             model_name = st.selectbox("Version", ["gpt-4o", "gpt-4o-mini"])
             
         if not api_key: st.error(f"Missing API Key for {provider}")
         st.divider()
         
-        # Animation Controls
-        st.subheader("🎮 Animation Controls")
+        # --- Animation ---
+        st.subheader("🎮 Animation")
         speed = st.slider("Speed Factor", 10, 200, 50)
         frame_dur = int(1000/speed)
         st.caption(f"Frame Duration: {frame_dur}ms")
         st.divider()
         
-        st.subheader("📜 Session History")
+        # --- Cost Estimator ---
+        with st.expander("💰 Cost Estimator", expanded=True):
+            total_cost = sum(item['cost'] for item in st.session_state.history)
+            st.write(f"**Total Session:** ${total_cost:.5f}")
+            if st.session_state.history:
+                last_run = st.session_state.history[-1]
+                st.write(f"**Last Run:** ${last_run['cost']:.5f}")
+                st.caption(f"Model: {last_run['model']}")
+        st.divider()
+        
+        # --- History ---
+        st.subheader("📜 History")
         if len(st.session_state.history) > 0:
             for i, item in enumerate(reversed(st.session_state.history)):
                 if i > 4: break
@@ -241,7 +249,7 @@ def main_app():
             with tab_cost:
                 if st.session_state.history:
                     last = st.session_state.history[-1]
-                    st.metric("Est. Cost", f"${last['cost']:.4f}")
+                    st.metric("Est. Cost", f"${last['cost']:.5f}")
 
         exec_globals = {"np": np, "go": go, "st": st}
         success, error = execute_safe_code(st.session_state["current_code"], exec_globals)
@@ -249,7 +257,7 @@ def main_app():
         if success and "fig" in exec_globals:
             fig = exec_globals["fig"]
             
-            # --- Inject Working Play Buttons Programmatically ---
+            # --- Inject Play Buttons ---
             fig.update_layout(
                 updatemenus=[dict(
                     type="buttons",
